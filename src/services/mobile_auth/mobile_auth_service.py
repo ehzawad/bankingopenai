@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 
 from ...core.interfaces.service_interface import ServiceInterface
 from ...api.client import BankingAPIClient
-from ...chat.tools.mobile_auth_tools import MobileAuthTools
+from ..common.tool_definitions import MOBILE_AUTH_TOOLS
 
 class MobileAuthService(ServiceInterface):
     """Service for mobile-based authentication operations"""
@@ -12,7 +12,6 @@ class MobileAuthService(ServiceInterface):
     def __init__(self, api_client: BankingAPIClient):
         self.api_client = api_client
         self.logger = logging.getLogger("banking_assistant.services.mobile_auth")
-        self.tools = MobileAuthTools.get_tools()
         self.logger.info("Mobile authentication service initialized")
     
     @property
@@ -21,7 +20,7 @@ class MobileAuthService(ServiceInterface):
     
     @property
     def supported_tools(self) -> List[Dict[str, Any]]:
-        return self.tools
+        return MOBILE_AUTH_TOOLS
     
     def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a mobile auth tool

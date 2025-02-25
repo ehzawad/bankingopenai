@@ -4,12 +4,18 @@ import logging
 import time
 import os
 import random
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from .client import BankingAPIClient
+from .api_utils import (
+    normalize_mobile_number, 
+    log_api_call, 
+    log_api_response, 
+    generate_call_id,
+    generate_ref_no
+)
 
 class MockBankingAPIClient(BankingAPIClient):
     """Mock implementation of banking API client using sample API responses"""
@@ -131,12 +137,21 @@ class MockBankingAPIClient(BankingAPIClient):
         Returns:
             API response containing account numbers
         """
-        mobile_number = self._normalize_mobile_number(mobile_number)
-        call_id = call_id or f"{int(time.time())}{random.randint(100000000, 999999999)}"
+        mobile_number = normalize_mobile_number(mobile_number)
+        call_id = call_id or generate_call_id()
         
         self.logger.info(f"Looking up accounts for mobile number: {mobile_number}")
-        self.logger.critical(f"Function: data_validation")
-        self.logger.critical(f"http://10.45.14.24/ccmwmtb/account/account-info-by-mobile-no?sercret=PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=&rm=I&callid={call_id}&connname=MWSEIBMN&cli={mobile_number}")
+        
+        # Log API call
+        url = "http://10.45.14.24/ccmwmtb/account/account-info-by-mobile-no"
+        params = {
+            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "rm": "I",
+            "callid": call_id,
+            "connname": "MWSEIBMN",
+            "cli": mobile_number
+        }
+        log_api_call("data_validation", url, params)
         
         # Find accounts matching this mobile number
         accounts = self.mobile_to_accounts.get(mobile_number, [])
@@ -167,9 +182,8 @@ class MockBankingAPIClient(BankingAPIClient):
                 }
             }
             
-            # Log response in the format from the example
-            combined_response = [{**response["status"], **response["response"]}]
-            self.logger.critical(combined_response)
+            # Log response
+            log_api_response(response)
             
             # Log account numbers for debugging
             for account in accounts:
@@ -200,8 +214,7 @@ class MockBankingAPIClient(BankingAPIClient):
             }
             
             # Log empty response
-            combined_response = [{**empty_response["status"], **empty_response["response"]}]
-            self.logger.critical(combined_response)
+            log_api_response(empty_response)
             
             return empty_response
     
@@ -217,7 +230,7 @@ class MockBankingAPIClient(BankingAPIClient):
         Returns:
             API response with verification result
         """
-        call_id = call_id or f"{int(time.time())}{random.randint(100000000, 999999999)}"
+        call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
         
         # Log process message
@@ -225,10 +238,21 @@ class MockBankingAPIClient(BankingAPIClient):
                        f"{{'input_text': '{pin}', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
                        f"'account_number': 1, 'process_interruption': None}}")
         
+        # Log API call
+        url = "http://10.45.14.24/ccmwmtb/card/verify-tpin"
+        params = {
+            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "rm": "I",
+            "callid": call_id,
+            "connname": "MWVRFTPN",
+            "cli": mobile_number,
+            "ccn": account_number,
+            "crp": pin
+        }
+        
         self.logger.critical(f"Function: account_pin_validation_api")
         self.logger.info(f"account_pin_validation_api")
-        self.logger.critical(f"Function: data_validation")
-        self.logger.critical(f"http://10.45.14.24/ccmwmtb/card/verify-tpin?sercret=PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=&rm=I&callid={call_id}&connname=MWVRFTPN&cli={mobile_number}&ccn={account_number}&crp={pin}")
+        log_api_call("data_validation", url, params)
         
         # Check if account exists
         account = self.account_lookup.get(account_number)
@@ -250,9 +274,8 @@ class MockBankingAPIClient(BankingAPIClient):
                 }
             }
             
-            # Log response in exact format from example
-            combined_response = [{**response["status"], **response["response"]}]
-            self.logger.critical(combined_response)
+            # Log response
+            log_api_response(response)
             self.logger.info(f"{{pin_number}} validation successful")
             
             return response
@@ -273,9 +296,8 @@ class MockBankingAPIClient(BankingAPIClient):
                 }
             }
             
-            # Log response in exact format from example
-            combined_response = [{**response["status"], **response["response"]}]
-            self.logger.critical(combined_response)
+            # Log response
+            log_api_response(response)
             
             return response
     
@@ -290,9 +312,9 @@ class MockBankingAPIClient(BankingAPIClient):
         Returns:
             API response with account details
         """
-        call_id = call_id or f"{int(time.time())}{random.randint(100000000, 999999999)}"
+        call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
-        ref_no = f"{datetime.now().strftime('%Y%m%d%H%M%S')}AHw{random.randint(10, 99)}"
+        ref_no = generate_ref_no()
         
         # Get account PIN (for log message only)
         account = self.account_lookup.get(account_number)
@@ -301,8 +323,20 @@ class MockBankingAPIClient(BankingAPIClient):
         self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, pin number {pin}, required service : currentBalance")
         self.logger.critical(f"Function: account_service_api")
         self.logger.info(f"account_service_api")
-        self.logger.critical(f"Function: data_validation")
-        self.logger.critical(f"http://10.45.14.24/ccmwmtb/account/common-api-function?sercret=PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=&rm=I&callid={call_id}&connname=MWSADART&cli={mobile_number}&acc={account_number}&channelId=102&refNo={ref_no}")
+        
+        # Log API call
+        url = "http://10.45.14.24/ccmwmtb/account/common-api-function"
+        params = {
+            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "rm": "I",
+            "callid": call_id,
+            "connname": "MWSADART",
+            "cli": mobile_number,
+            "acc": account_number,
+            "channelId": "102",
+            "refNo": ref_no
+        }
+        log_api_call("data_validation", url, params)
         
         if account:
             # Return account details
@@ -326,9 +360,8 @@ class MockBankingAPIClient(BankingAPIClient):
                 }
             }
             
-            # Log response in exact format from example
-            combined_response = [{**response["status"], **response["response"]}]
-            self.logger.critical(combined_response)
+            # Log response
+            log_api_response(response)
             
             return response
         else:
@@ -354,29 +387,6 @@ class MockBankingAPIClient(BankingAPIClient):
             }
             
             # Log response
-            combined_response = [{**response["status"], **response["response"]}]
-            self.logger.critical(combined_response)
+            log_api_response(response)
             
             return response
-    
-    def _normalize_mobile_number(self, mobile_number: str) -> str:
-        """Normalize mobile number for consistent lookup
-        
-        Args:
-            mobile_number: Mobile number to normalize
-            
-        Returns:
-            Normalized mobile number
-        """
-        # Handle numeric digits
-        mobile_number = re.sub(r'\D', '', mobile_number)
-        
-        # Handle Bangladesh country code
-        if mobile_number.startswith("880"):
-            mobile_number = mobile_number[3:]
-        
-        # Add leading 0 if needed
-        if not mobile_number.startswith("0") and len(mobile_number) == 10:
-            mobile_number = "0" + mobile_number
-            
-        return mobile_number

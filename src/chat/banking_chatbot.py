@@ -162,6 +162,18 @@ class BankingChatbot(ChatInterface):
             # Get current conversation state
             conversation = self.conversation_manager.get_conversation(session_id)
             
+            # If we have accounts but no selection yet, guide the assistant to ask for last 4 digits
+            if (self.session_context.has_accounts(session_id) and 
+                not self.session_context.is_account_selected(session_id)):
+                
+                # Add explicit guidance to the assistant
+                self.conversation_manager.add_system_message(
+                    session_id,
+                    "The user has accounts associated with their phone number. "
+                    "Ask them to provide the last 4 digits of their account number to proceed. "
+                    "IMPORTANT: DO NOT list or reveal any account numbers or account masks."
+                )
+            
             # Generate LLM response with available tools
             response = await self.llm.generate_response(
                 messages=conversation,
@@ -176,12 +188,26 @@ class BankingChatbot(ChatInterface):
                 # Process tool calls
                 await self._process_tool_calls(session_id, tool_calls)
                 
-                # Add reminder to include all account information
-                self.conversation_manager.add_system_message(
-                    session_id,
-                    "Remember to include ALL available account information in your response, "
-                    "including balance, currency, account status, and last transaction date if available."
-                )
+                # Add reminder to include all account information when authenticated
+                if self.auth_manager.is_authenticated(session_id):
+                    self.conversation_manager.add_system_message(
+                        session_id,
+                        "Remember to include ALL available account information in your response, "
+                        "including balance, currency, account status, and last transaction date if available."
+                    )
+                # Add security guidance if not authenticated yet
+                elif self.session_context.has_accounts(session_id):
+                    if self.session_context.is_account_selected(session_id):
+                        self.conversation_manager.add_system_message(
+                            session_id,
+                            "The user has selected an account. Ask for their 4-digit PIN to authenticate."
+                        )
+                    else:
+                        self.conversation_manager.add_system_message(
+                            session_id,
+                            "The user has accounts, but hasn't selected one yet. Ask them to provide the "
+                            "last 4 digits of their account number. DO NOT list or reveal any account numbers."
+                        )
                 
                 # Get updated conversation and generate final response
                 updated_conversation = self.conversation_manager.get_conversation(session_id)
@@ -241,7 +267,15 @@ class BankingChatbot(ChatInterface):
                 # Store accounts in session context
                 self.session_context.set_retrieved_accounts(session_id, result["accounts"])
                 
-                # Add synthetic tool call and response to conversation for context
+                # IMPORTANT: Don't add the actual result to the conversation context
+                # Instead, add a sanitized version that doesn't contain account numbers
+                sanitized_result = {
+                    "status": "success",
+                    "message": f"Found accounts associated with the phone number",
+                    "accounts_found": True
+                }
+                
+                # Add synthetic tool call to conversation for context
                 tool_call = {
                     "id": "auto_accounts_lookup",
                     "type": "function",
@@ -255,24 +289,29 @@ class BankingChatbot(ChatInterface):
                 self.conversation_manager.add_tool_response(
                     session_id, 
                     "auto_accounts_lookup",
-                    json.dumps(result)
+                    json.dumps(sanitized_result)
                 )
                 
                 # Add a system message to guide the assistant
                 accounts = result["accounts"]
-                masked_accounts = [acc["masked_account"] for acc in accounts]
-                accounts_list = ", ".join(masked_accounts)
+                num_accounts = len(accounts)
                 
                 self.conversation_manager.add_system_message(
                     session_id,
-                    f"The system has automatically retrieved {len(accounts)} accounts "
-                    f"associated with the caller's phone number: {accounts_list}. "
-                    f"Ask the user to provide the last 4 digits of their account number to confirm which account they want to access."
+                    f"The system has found {num_accounts} account(s) associated with the caller's phone number. "
+                    "Ask the user to provide the last 4 digits of their account number to confirm which account they want to access. "
+                    "IMPORTANT: Do not list or reveal any account numbers to the user. This is a security measure."
                 )
                 
-                self.logger.info(f"Retrieved {len(accounts)} accounts for caller {mobile_number}")
+                self.logger.info(f"Retrieved {num_accounts} accounts for caller {mobile_number}")
             else:
                 self.logger.warning(f"No accounts found for mobile number: {mobile_number}")
+                # Add system message for no accounts found
+                self.conversation_manager.add_system_message(
+                    session_id,
+                    "No accounts were found associated with the caller's phone number. "
+                    "Inform the user that no accounts were found for their phone number."
+                )
             
         except Exception as e:
             self.logger.error(f"Error during auto account lookup: {e}")
@@ -394,17 +433,23 @@ class BankingChatbot(ChatInterface):
                     "name": "validate_pin",
                     "arguments": json.dumps({
                         "account_number": account_number, 
-                        "pin": pin,
+                        "pin": "****",  # Hide actual PIN in the conversation context
                         "mobile_number": caller_id
                     })
                 }
+            }
+            
+            # Create a sanitized version of the result that doesn't include account details
+            sanitized_result = {
+                "valid": pin_result.get("valid", False),
+                "message": pin_result.get("message", "")
             }
             
             self.conversation_manager.add_tool_call(session_id, pin_tool_call)
             self.conversation_manager.add_tool_response(
                 session_id,
                 "pin_validation_call",
-                json.dumps(pin_result)
+                json.dumps(sanitized_result)
             )
             
             # If PIN is valid, get account details
@@ -434,7 +479,7 @@ class BankingChatbot(ChatInterface):
                         "name": "get_account_details",
                         "arguments": json.dumps({
                             "account_number": account_number, 
-                            "pin": pin,
+                            "pin": "****",  # Hide actual PIN
                             "mobile_number": caller_id
                         })
                     }
@@ -508,36 +553,71 @@ class BankingChatbot(ChatInterface):
             function_name = tool_call["function"]["name"]
             function_args = json.loads(tool_call["function"]["arguments"])
             
+            # Create sanitized arguments for logging to conversation
+            sanitized_args = function_args.copy()
+            if "pin" in sanitized_args:
+                sanitized_args["pin"] = "****"  # Hide PIN
+            
             # Add additional context to args if needed
             if function_name == "get_accounts_by_mobile" and "call_id" not in function_args:
                 function_args["call_id"] = call_id
                 function_args["session_id"] = session_id
+                sanitized_args["call_id"] = call_id
+                sanitized_args["session_id"] = session_id
                 
             # Add mobile_number to account-related functions when caller_id is available
             if caller_id and function_name in ["validate_account", "validate_pin", "get_account_details"]:
                 function_args["mobile_number"] = caller_id
+                sanitized_args["mobile_number"] = caller_id
                 
-            self.logger.info(f"Executing tool: {function_name} with args: {function_args}")
+            self.logger.info(f"Executing tool: {function_name} with args: {sanitized_args}")
             
             try:
-                # Execute the tool
+                # Execute the tool with the real arguments
                 result = self.registry.execute_tool(function_name, function_args)
                 self.logger.debug(f"Tool execution result: {result}")
                 
-                # Add tool call to conversation
-                self.conversation_manager.add_tool_call(session_id, tool_call)
+                # Create a sanitized tool call for the conversation
+                sanitized_tool_call = tool_call.copy()
+                sanitized_tool_call["function"] = sanitized_tool_call["function"].copy()
+                sanitized_tool_call["function"]["arguments"] = json.dumps(sanitized_args)
                 
-                # Add tool response to conversation
-                self.conversation_manager.add_tool_response(
-                    session_id,
-                    tool_call.get("id", "unknown"),
-                    json.dumps(result)
-                )
+                # Add sanitized tool call to conversation
+                self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
+                
+                # Sanitize result for get_accounts_by_mobile to avoid revealing account numbers
+                if function_name == "get_accounts_by_mobile":
+                    sanitized_result = {
+                        "status": result["status"],
+                        "message": result["message"],
+                        "accounts_found": len(result.get("accounts", [])) > 0
+                    }
+                    self.conversation_manager.add_tool_response(
+                        session_id,
+                        tool_call.get("id", "unknown"),
+                        json.dumps(sanitized_result)
+                    )
+                else:
+                    # Add regular tool response for other functions
+                    self.conversation_manager.add_tool_response(
+                        session_id,
+                        tool_call.get("id", "unknown"),
+                        json.dumps(result)
+                    )
                 
                 # Special handling for specific tools
                 if function_name == "get_accounts_by_mobile" and result["status"] == "success":
                     self.logger.info(f"Storing {len(result['accounts'])} accounts from get_accounts_by_mobile")
                     self.session_context.set_retrieved_accounts(session_id, result["accounts"])
+                    
+                    # Add a system message to instruct not to show account numbers
+                    num_accounts = len(result["accounts"])
+                    self.conversation_manager.add_system_message(
+                        session_id,
+                        f"The system has found {num_accounts} account(s) associated with the caller's phone number. "
+                        "Ask the user to provide the last 4 digits of their account number to confirm which account they want to access. "
+                        "IMPORTANT: Do not list or reveal any account numbers to the user. This is a security measure."
+                    )
                     # Important: account is not selected yet, waiting for last 4 digits
                 
                 elif function_name == "validate_account" and result.get("valid", False):
@@ -561,7 +641,7 @@ class BankingChatbot(ChatInterface):
                 result = {"error": str(e)}
                 
                 # Add error response to conversation
-                self.conversation_manager.add_tool_call(session_id, tool_call)
+                self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
                 self.conversation_manager.add_tool_response(
                     session_id,
                     tool_call.get("id", "unknown"),
@@ -573,7 +653,7 @@ class BankingChatbot(ChatInterface):
                 result = {"error": f"Missing required parameter: {e}"}
                 
                 # Add error response to conversation
-                self.conversation_manager.add_tool_call(session_id, tool_call)
+                self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
                 self.conversation_manager.add_tool_response(
                     session_id,
                     tool_call.get("id", "unknown"),
