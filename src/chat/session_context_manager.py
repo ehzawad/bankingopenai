@@ -30,10 +30,10 @@ class SessionContextManager:
             "caller_id": caller_id,
             "channel": channel,
             "account_retrieved": False,
-            "account_selected": False,  # New flag to track account selection state
+            "account_selected": False,  # Track account selection state
             "retrieved_accounts": [],
             "selected_account": None,
-            "awaiting_pin": False,  # New flag to track if we're waiting for PIN
+            "awaiting_pin": False,  # Track if we're waiting for PIN
             "call_id": f"{int(time.time())}{session_id[-10:]}"  # Generate a call ID similar to the logs
         }
         self.logger.info(f"Initialized session context for {session_id} with caller_id {caller_id}")
@@ -56,7 +56,6 @@ class SessionContextManager:
         
         # Log the current state for debugging
         self.logger.debug(f"Updated session context for {session_id}: {updates}")
-        self.logger.debug(f"Current session state: {self.session_contexts[session_id]}")
     
     def get_session_context(self, session_id: str) -> Dict[str, Any]:
         """Get the full context data for a session

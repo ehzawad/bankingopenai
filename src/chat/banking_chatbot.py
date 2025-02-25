@@ -11,6 +11,7 @@ from .tools.tool_factory import ToolFactory
 from .conversation_manager import ConversationManager
 from .session_context_manager import SessionContextManager
 from ..services.authentication.auth_manager import AuthenticationManager
+from ..utils.text_extraction import extract_pin, extract_last_4_digits, contains_restricted_keywords
 from config.prompts.prompt_manager import PromptManager
 
 class BankingChatbot(ChatInterface):
@@ -98,7 +99,7 @@ class BankingChatbot(ChatInterface):
             self.logger.debug(f"Current session state: {session_state}")
             
             # Check for restricted keywords
-            if self._contains_restricted_keywords(message):
+            if contains_restricted_keywords(message, self.restricted_keywords):
                 self.logger.info(f"Message contains restricted keywords: {message}")
                 return {
                     "response": (
@@ -124,37 +125,10 @@ class BankingChatbot(ChatInterface):
                 if field_response:
                     return {"response": field_response}
             
-            # STATE MACHINE:
-            # 1. If we have accounts but no selected account, look for last 4 digits
-            # 2. If we have a selected account but not authenticated, look for PIN
-            # 3. Otherwise, continue with normal processing
-            
-            # 1. Check if user message contains last 4 digits of account number
-            if (self.session_context.has_accounts(session_id) and 
-                not self.session_context.is_account_selected(session_id)):
-                
-                last_4_digits = self._extract_last_4_digits(message)
-                if last_4_digits:
-                    self.logger.info(f"STEP 1: Detected last 4 digits of account: {last_4_digits}")
-                    account_match = await self._match_account_by_last_digits(session_id, last_4_digits)
-                    if account_match:
-                        return account_match
-            
-            # 2. Check if user message is a PIN (after we've selected an account)
-            elif (self.session_context.is_account_selected(session_id) and 
-                  self.session_context.is_awaiting_pin(session_id) and
-                  not self.auth_manager.is_authenticated(session_id)):
-                
-                pin = self._extract_pin(message)
-                if pin:
-                    self.logger.info(f"STEP 2: Detected PIN in message: {pin}")
-                    account_number = self.session_context.get_selected_account(session_id)
-                    if account_number:
-                        pin_response = await self._handle_pin_validation(session_id, account_number, pin)
-                        if pin_response:
-                            return pin_response
-            
-            # 3. Normal processing for other messages
+            # Process authentication state based on message content
+            response = await self._process_authentication_state(session_id, message)
+            if response:
+                return response
             
             # Add user message to conversation
             self.conversation_manager.add_user_message(session_id, message)
@@ -162,17 +136,8 @@ class BankingChatbot(ChatInterface):
             # Get current conversation state
             conversation = self.conversation_manager.get_conversation(session_id)
             
-            # If we have accounts but no selection yet, guide the assistant to ask for last 4 digits
-            if (self.session_context.has_accounts(session_id) and 
-                not self.session_context.is_account_selected(session_id)):
-                
-                # Add explicit guidance to the assistant
-                self.conversation_manager.add_system_message(
-                    session_id,
-                    "The user has accounts associated with their phone number. "
-                    "Ask them to provide the last 4 digits of their account number to proceed. "
-                    "IMPORTANT: DO NOT list or reveal any account numbers or account masks."
-                )
+            # Add contextual guidance for the assistant based on session state
+            self._add_contextual_guidance(session_id)
             
             # Generate LLM response with available tools
             response = await self.llm.generate_response(
@@ -188,26 +153,8 @@ class BankingChatbot(ChatInterface):
                 # Process tool calls
                 await self._process_tool_calls(session_id, tool_calls)
                 
-                # Add reminder to include all account information when authenticated
-                if self.auth_manager.is_authenticated(session_id):
-                    self.conversation_manager.add_system_message(
-                        session_id,
-                        "Remember to include ALL available account information in your response, "
-                        "including balance, currency, account status, and last transaction date if available."
-                    )
-                # Add security guidance if not authenticated yet
-                elif self.session_context.has_accounts(session_id):
-                    if self.session_context.is_account_selected(session_id):
-                        self.conversation_manager.add_system_message(
-                            session_id,
-                            "The user has selected an account. Ask for their 4-digit PIN to authenticate."
-                        )
-                    else:
-                        self.conversation_manager.add_system_message(
-                            session_id,
-                            "The user has accounts, but hasn't selected one yet. Ask them to provide the "
-                            "last 4 digits of their account number. DO NOT list or reveal any account numbers."
-                        )
+                # Add security guidance based on authentication state
+                self._add_security_guidance(session_id)
                 
                 # Get updated conversation and generate final response
                 updated_conversation = self.conversation_manager.get_conversation(session_id)
@@ -218,7 +165,7 @@ class BankingChatbot(ChatInterface):
             if not content:
                 content = "I apologize, but I'm having trouble generating a response. Please try again."
             
-            if self._contains_restricted_keywords(content):
+            if contains_restricted_keywords(content, self.restricted_keywords):
                 self.logger.info("Response contains restricted keywords, overriding")
                 content = (
                     "I'm sorry, but I can only provide account balance information for standard deposit accounts. "
@@ -235,6 +182,88 @@ class BankingChatbot(ChatInterface):
             return {
                 "response": "I'm sorry, but I'm having trouble processing your request right now. Please try again later."
             }
+    
+    async def _process_authentication_state(self, session_id: str, message: str) -> Optional[Dict[str, Any]]:
+        """Process authentication state based on the message content
+        
+        Args:
+            session_id: The session identifier
+            message: User message content
+            
+        Returns:
+            Response dictionary if authentication state changes, None otherwise
+        """
+        # 1. Check if user message contains last 4 digits of account number
+        if (self.session_context.has_accounts(session_id) and 
+            not self.session_context.is_account_selected(session_id)):
+            
+            last_4_digits = extract_last_4_digits(message)
+            if last_4_digits:
+                self.logger.info(f"STEP 1: Detected last 4 digits of account: {last_4_digits}")
+                account_match = await self._match_account_by_last_digits(session_id, last_4_digits)
+                if account_match:
+                    return account_match
+        
+        # 2. Check if user message is a PIN (after we've selected an account)
+        elif (self.session_context.is_account_selected(session_id) and 
+              self.session_context.is_awaiting_pin(session_id) and
+              not self.auth_manager.is_authenticated(session_id)):
+            
+            pin = extract_pin(message)
+            if pin:
+                self.logger.info(f"STEP 2: Detected PIN in message")
+                account_number = self.session_context.get_selected_account(session_id)
+                if account_number:
+                    pin_response = await self._handle_pin_validation(session_id, account_number, pin)
+                    if pin_response:
+                        return pin_response
+        
+        return None
+    
+    def _add_contextual_guidance(self, session_id: str) -> None:
+        """Add contextual guidance for the assistant based on session state
+        
+        Args:
+            session_id: The session identifier
+        """
+        # If we have accounts but no selection yet, guide the assistant to ask for last 4 digits
+        if (self.session_context.has_accounts(session_id) and 
+            not self.session_context.is_account_selected(session_id)):
+            
+            # Add explicit guidance to the assistant
+            self.conversation_manager.add_system_message(
+                session_id,
+                "The user has accounts associated with their phone number. "
+                "Ask them to provide the last 4 digits of their account number to proceed. "
+                "IMPORTANT: DO NOT list or reveal any account numbers or account masks."
+            )
+    
+    def _add_security_guidance(self, session_id: str) -> None:
+        """Add security guidance based on authentication state
+        
+        Args:
+            session_id: The session identifier
+        """
+        # Add reminder to include all account information when authenticated
+        if self.auth_manager.is_authenticated(session_id):
+            self.conversation_manager.add_system_message(
+                session_id,
+                "Remember to include ALL available account information in your response, "
+                "including balance, currency, account status, and last transaction date if available."
+            )
+        # Add security guidance if not authenticated yet
+        elif self.session_context.has_accounts(session_id):
+            if self.session_context.is_account_selected(session_id):
+                self.conversation_manager.add_system_message(
+                    session_id,
+                    "The user has selected an account. Ask for their 4-digit PIN to authenticate."
+                )
+            else:
+                self.conversation_manager.add_system_message(
+                    session_id,
+                    "The user has accounts, but hasn't selected one yet. Ask them to provide the "
+                    "last 4 digits of their account number. DO NOT list or reveal any account numbers."
+                )
     
     async def _auto_lookup_accounts(self, session_id: str, mobile_number: str) -> None:
         """Automatically look up accounts for a mobile number
@@ -267,8 +296,7 @@ class BankingChatbot(ChatInterface):
                 # Store accounts in session context
                 self.session_context.set_retrieved_accounts(session_id, result["accounts"])
                 
-                # IMPORTANT: Don't add the actual result to the conversation context
-                # Instead, add a sanitized version that doesn't contain account numbers
+                # Add sanitized result to conversation context
                 sanitized_result = {
                     "status": "success",
                     "message": f"Found accounts associated with the phone number",
@@ -315,32 +343,6 @@ class BankingChatbot(ChatInterface):
             
         except Exception as e:
             self.logger.error(f"Error during auto account lookup: {e}")
-    
-    def _extract_last_4_digits(self, message: str) -> Optional[str]:
-        """Extract last 4 digits of account number from message
-        
-        Args:
-            message: The user message
-            
-        Returns:
-            Last 4 digits or None if not found
-        """
-        # Patterns for common ways to express last 4 digits
-        patterns = [
-            r'\b(\d{4})\b',                     # Simple 4 digits
-            r'last\s+four\s+digits?\s+(\d{4})',  # "last four digits 1234"
-            r'ending\s+in\s+(\d{4})',           # "ending in 1234"
-            r'ends?\s+with\s+(\d{4})',          # "ends with 1234"
-            r'account\s+\w+\s+(\d{4})'          # "account XXXX 1234"
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                self.logger.debug(f"Extracted last 4 digits: {match.group(1)} using pattern: {pattern}")
-                return match.group(1)
-        
-        return None
     
     async def _match_account_by_last_digits(
         self, 
@@ -405,10 +407,9 @@ class BankingChatbot(ChatInterface):
         self.logger.info(f"Validating PIN for account {account_number}")
         
         try:
-            # Get caller ID and call ID from session context
+            # Get caller ID from session context
             session_ctx = self.session_context.get_session_context(session_id)
             caller_id = session_ctx.get("caller_id")
-            call_id = session_ctx.get("call_id")
             
             # Validate PIN
             auth_service = self.registry.get_service("authentication")
@@ -518,23 +519,6 @@ class BankingChatbot(ChatInterface):
             
         return None
     
-    def _extract_pin(self, message: str) -> Optional[str]:
-        """Extract a 4-digit PIN from the message
-        
-        Args:
-            message: The user message
-            
-        Returns:
-            Extracted PIN or None
-        """
-        # Look for 4-digit sequences
-        pin_pattern = r'\b\d{4}\b'
-        pin_match = re.search(pin_pattern, message)
-        if pin_match:
-            self.logger.debug(f"Extracted PIN: {pin_match.group(0)}")
-            return pin_match.group(0)
-        return None
-    
     async def _process_tool_calls(self, session_id: str, tool_calls: List[Dict[str, Any]]) -> None:
         """Process tool calls
         
@@ -585,56 +569,14 @@ class BankingChatbot(ChatInterface):
                 # Add sanitized tool call to conversation
                 self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
                 
-                # Sanitize result for get_accounts_by_mobile to avoid revealing account numbers
-                if function_name == "get_accounts_by_mobile":
-                    sanitized_result = {
-                        "status": result["status"],
-                        "message": result["message"],
-                        "accounts_found": len(result.get("accounts", [])) > 0
-                    }
-                    self.conversation_manager.add_tool_response(
-                        session_id,
-                        tool_call.get("id", "unknown"),
-                        json.dumps(sanitized_result)
-                    )
-                else:
-                    # Add regular tool response for other functions
-                    self.conversation_manager.add_tool_response(
-                        session_id,
-                        tool_call.get("id", "unknown"),
-                        json.dumps(result)
-                    )
-                
-                # Special handling for specific tools
-                if function_name == "get_accounts_by_mobile" and result["status"] == "success":
-                    self.logger.info(f"Storing {len(result['accounts'])} accounts from get_accounts_by_mobile")
-                    self.session_context.set_retrieved_accounts(session_id, result["accounts"])
-                    
-                    # Add a system message to instruct not to show account numbers
-                    num_accounts = len(result["accounts"])
-                    self.conversation_manager.add_system_message(
-                        session_id,
-                        f"The system has found {num_accounts} account(s) associated with the caller's phone number. "
-                        "Ask the user to provide the last 4 digits of their account number to confirm which account they want to access. "
-                        "IMPORTANT: Do not list or reveal any account numbers to the user. This is a security measure."
-                    )
-                    # Important: account is not selected yet, waiting for last 4 digits
-                
-                elif function_name == "validate_account" and result.get("valid", False):
-                    account_number = function_args.get("account_number")
-                    self.logger.info(f"Account {account_number} validated, marking as selected and awaiting PIN")
-                    # Mark account as selected and awaiting PIN
-                    self.session_context.set_selected_account(session_id, account_number)
-                
-                elif function_name == "validate_pin" and result.get("valid", False):
-                    account_number = function_args.get("account_number")
-                    self.logger.info(f"PIN validated for account {account_number}, marking session as authenticated")
-                    self.auth_manager.authenticate_session(session_id, account_number)
-                
-                elif function_name == "get_account_details" and result.get("status") == "success":
-                    account_number = function_args.get("account_number")
-                    self.logger.info(f"Got account details for {account_number}, marking session as authenticated")
-                    self.auth_manager.authenticate_session(session_id, account_number)
+                # Process tool results and update session state
+                await self._process_tool_result(
+                    session_id, 
+                    function_name, 
+                    function_args, 
+                    result, 
+                    tool_call.get("id", "unknown")
+                )
                 
             except ValueError as e:
                 self.logger.error(f"Error executing tool: {e}")
@@ -659,6 +601,74 @@ class BankingChatbot(ChatInterface):
                     tool_call.get("id", "unknown"),
                     json.dumps(result)
                 )
+    
+    async def _process_tool_result(
+        self, 
+        session_id: str, 
+        function_name: str, 
+        function_args: Dict[str, Any],
+        result: Dict[str, Any],
+        tool_call_id: str
+    ) -> None:
+        """Process tool execution result and update session state
+        
+        Args:
+            session_id: The session identifier
+            function_name: The name of the executed tool
+            function_args: The arguments passed to the tool
+            result: The tool execution result
+            tool_call_id: The ID of the tool call
+        """
+        # Sanitize result for get_accounts_by_mobile to avoid revealing account numbers
+        if function_name == "get_accounts_by_mobile":
+            sanitized_result = {
+                "status": result["status"],
+                "message": result["message"],
+                "accounts_found": len(result.get("accounts", [])) > 0
+            }
+            self.conversation_manager.add_tool_response(
+                session_id,
+                tool_call_id,
+                json.dumps(sanitized_result)
+            )
+            
+            # Update session state if accounts were found
+            if result["status"] == "success":
+                self.logger.info(f"Storing {len(result['accounts'])} accounts from get_accounts_by_mobile")
+                self.session_context.set_retrieved_accounts(session_id, result["accounts"])
+                
+                # Add a system message to instruct not to show account numbers
+                num_accounts = len(result["accounts"])
+                self.conversation_manager.add_system_message(
+                    session_id,
+                    f"The system has found {num_accounts} account(s) associated with the caller's phone number. "
+                    "Ask the user to provide the last 4 digits of their account number to confirm which account they want to access. "
+                    "IMPORTANT: Do not list or reveal any account numbers to the user. This is a security measure."
+                )
+        else:
+            # Add regular tool response for other functions
+            self.conversation_manager.add_tool_response(
+                session_id,
+                tool_call_id,
+                json.dumps(result)
+            )
+            
+            # Update session state based on tool result
+            if function_name == "validate_account" and result.get("valid", False):
+                account_number = function_args.get("account_number")
+                self.logger.info(f"Account {account_number} validated, marking as selected and awaiting PIN")
+                # Mark account as selected and awaiting PIN
+                self.session_context.set_selected_account(session_id, account_number)
+            
+            elif function_name == "validate_pin" and result.get("valid", False):
+                account_number = function_args.get("account_number")
+                self.logger.info(f"PIN validated for account {account_number}, marking session as authenticated")
+                self.auth_manager.authenticate_session(session_id, account_number)
+            
+            elif function_name == "get_account_details" and result.get("status") == "success":
+                account_number = function_args.get("account_number")
+                self.logger.info(f"Got account details for {account_number}, marking session as authenticated")
+                self.auth_manager.authenticate_session(session_id, account_number)
     
     async def _handle_field_query(self, session_id: str, account_number: str, message: str) -> Optional[str]:
         """Handle field-specific queries for authenticated users
@@ -731,18 +741,6 @@ class BankingChatbot(ChatInterface):
         except Exception as e:
             self.logger.error(f"Error handling field query: {e}", exc_info=True)
             return None
-    
-    def _contains_restricted_keywords(self, text: str) -> bool:
-        """Check if text contains restricted keywords using word boundary matching
-        
-        Args:
-            text: Text to check
-            
-        Returns:
-            True if text contains restricted keywords
-        """
-        from .keyword_utils import contains_restricted_keywords
-        return contains_restricted_keywords(text, self.restricted_keywords)
 
     async def inject_prompt(self, session_id: str, prompt: str) -> bool:
         """Inject a custom prompt into a session

@@ -42,7 +42,7 @@ class RealBankingAPIClient(BankingAPIClient):
         mobile_number = normalize_mobile_number(mobile_number)
         call_id = call_id or generate_call_id()
         
-        # Build URL for account lookup - Fixed typo in parameter name (sercret -> secret)
+        # Build URL for account lookup
         url = f"{self.base_url}/account/account-info-by-mobile-no"
         params = {
             "secret": self.api_secret,
@@ -99,7 +99,7 @@ class RealBankingAPIClient(BankingAPIClient):
                        f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
                        f"'account_number': 1, 'process_interruption': None}}")
         
-        # Build URL for PIN verification - Fixed typo in parameter name (sercret -> secret)
+        # Build URL for PIN verification
         url = f"{self.base_url}/card/verify-tpin"
         params = {
             "secret": self.api_secret,
@@ -167,7 +167,7 @@ class RealBankingAPIClient(BankingAPIClient):
         # Log request information (without PIN)
         self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, required service : currentBalance")
         
-        # Build URL for account details - Fixed typo in parameter name (sercret -> secret)
+        # Build URL for account details
         url = f"{self.base_url}/account/common-api-function"
         params = {
             "secret": self.api_secret,

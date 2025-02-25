@@ -19,8 +19,6 @@ from src.interfaces.fastapi_interface import FastAPIInterface
 from src.core.registry import ServiceRegistry
 from config.prompts.prompt_manager import PromptManager
 
-# Removed unused PromptInjection class
-
 def setup_logger():
     """Configure logging for the application"""
     logger = logging.getLogger("banking_assistant")

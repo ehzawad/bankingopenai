@@ -4,21 +4,27 @@ Utility modules for the banking assistant application
 """
 
 from .error_handling import (
-    handle_exceptions, 
-    handle_async_exceptions,
     format_error_response,
     APIError,
     ValidationError,
     NotFoundError,
     AuthenticationError
 )
+from .text_extraction import (
+    extract_pin,
+    extract_last_4_digits,
+    extract_pin_from_conversation,
+    contains_restricted_keywords
+)
 
 __all__ = [
-    "handle_exceptions",
-    "handle_async_exceptions",
     "format_error_response",
     "APIError",
     "ValidationError", 
     "NotFoundError",
-    "AuthenticationError"
+    "AuthenticationError",
+    "extract_pin",
+    "extract_last_4_digits",
+    "extract_pin_from_conversation",
+    "contains_restricted_keywords"
 ]

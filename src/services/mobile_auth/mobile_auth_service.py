@@ -66,35 +66,43 @@ class MobileAuthService(ServiceInterface):
         # Log details for debugging
         self.logger.info(f"Looking up accounts for mobile: {mobile_number}, call_id: {call_id}, session_id: {session_id}")
         
-        # Call the API to get accounts by mobile number
-        response = self.api_client.get_accounts_by_mobile(mobile_number, call_id)
-        
-        # If successful, format the response for the tools interface
-        if response["status"]["gstatus"]:
-            accounts = response["response"]["responseData"]
-            account_list = []
+        try:
+            # Call the API to get accounts by mobile number
+            response = self.api_client.get_accounts_by_mobile(mobile_number, call_id)
             
-            for account in accounts:
-                account_list.append({
-                    "account_number": account["key"],
-                    "masked_account": account["value"]
-                })
-            
-            self.logger.info(f"Found {len(account_list)} accounts for mobile {mobile_number}")
-            
-            # Log the account numbers for debugging
-            for account in account_list:
-                self.logger.debug(f"Account: {account['account_number']} (masked: {account['masked_account']})")
-            
-            return {
-                "status": "success",
-                "message": f"Found {len(account_list)} accounts",
-                "accounts": account_list
-            }
-        else:
-            self.logger.warning(f"No accounts found for mobile {mobile_number}")
+            # If successful, format the response for the tools interface
+            if response["status"]["gstatus"]:
+                accounts = response["response"]["responseData"]
+                account_list = []
+                
+                for account in accounts:
+                    account_list.append({
+                        "account_number": account["key"],
+                        "masked_account": account["value"]
+                    })
+                
+                self.logger.info(f"Found {len(account_list)} accounts for mobile {mobile_number}")
+                
+                # Log the account numbers for debugging
+                for account in account_list:
+                    self.logger.debug(f"Account: {account['account_number']} (masked: {account['masked_account']})")
+                
+                return {
+                    "status": "success",
+                    "message": f"Found {len(account_list)} accounts",
+                    "accounts": account_list
+                }
+            else:
+                self.logger.warning(f"No accounts found for mobile {mobile_number}")
+                return {
+                    "status": "error",
+                    "message": response["status"].get("gmmsg", "No accounts found for this mobile number"),
+                    "accounts": []
+                }
+        except Exception as e:
+            self.logger.error(f"Error looking up accounts for mobile {mobile_number}: {str(e)}")
             return {
                 "status": "error",
-                "message": response["status"].get("gmmsg", "No accounts found for this mobile number"),
+                "message": f"Error looking up accounts: {str(e)}",
                 "accounts": []
             }

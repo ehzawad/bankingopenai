@@ -4,7 +4,7 @@ import logging
 import time
 import os
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -23,7 +23,10 @@ class MockBankingAPIClient(BankingAPIClient):
     def __init__(self, data_path: str = "data/mock_api_data.json"):
         self.logger = logging.getLogger("banking_assistant.api.mock")
         
-        # Sample account data based on the provided API responses but with randomized information
+        # Get current date for setting realistic transaction dates
+        now = datetime.now()
+        
+        # Sample account data with realistic past dates
         self.sample_accounts = [
             {
                 "account_number": "1311002345678",
@@ -42,7 +45,7 @@ class MockBankingAPIClient(BankingAPIClient):
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
                     "accOpenDate": "2023-06-12", 
-                    "lastTxnDate": "2024-01-15",  # Fixed future date issue  
+                    "lastTxnDate": (now - timedelta(days=15)).strftime("%Y-%m-%d"),
                     "currentBalance": "1250.75 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "1250.75 ", 
@@ -71,7 +74,7 @@ class MockBankingAPIClient(BankingAPIClient):
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
                     "accOpenDate": "2023-08-23", 
-                    "lastTxnDate": "2024-01-20",  # Fixed future date issue
+                    "lastTxnDate": (now - timedelta(days=10)).strftime("%Y-%m-%d"),
                     "currentBalance": "8540.25 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "8540.25 ", 
@@ -99,8 +102,8 @@ class MockBankingAPIClient(BankingAPIClient):
                     "intRate": "3.5000", 
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
-                    "accOpenDate": "2024-01-05", 
-                    "lastTxnDate": "2024-01-25",  # Fixed future date issue
+                    "accOpenDate": "2023-01-05", 
+                    "lastTxnDate": (now - timedelta(days=5)).strftime("%Y-%m-%d"),
                     "currentBalance": "25480.50 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "25480.50 ", 
@@ -142,7 +145,7 @@ class MockBankingAPIClient(BankingAPIClient):
         
         self.logger.info(f"Looking up accounts for mobile number: {mobile_number}")
         
-        # Log API call - Fixed typo in parameter name (sercret -> secret)
+        # Log API call
         url = "http://10.45.14.24/ccmwmtb/account/account-info-by-mobile-no"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -238,7 +241,7 @@ class MockBankingAPIClient(BankingAPIClient):
                        f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
                        f"'account_number': 1, 'process_interruption': None}}")
         
-        # Log API call - Fixed typo in parameter name (sercret -> secret)
+        # Log API call
         url = "http://10.45.14.24/ccmwmtb/card/verify-tpin"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -320,15 +323,12 @@ class MockBankingAPIClient(BankingAPIClient):
         mobile_number = mobile_number or "unknown"
         ref_no = generate_ref_no()
         
-        # Get account PIN (for log message only, but mask it)
-        account = self.account_lookup.get(account_number)
-        
         # Log request with minimal sensitive information
         self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, required service : currentBalance")
         self.logger.critical(f"Function: account_service_api")
         self.logger.info(f"account_service_api")
         
-        # Log API call - Fixed typo in parameter name (sercret -> secret)
+        # Log API call
         url = "http://10.45.14.24/ccmwmtb/account/common-api-function"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -342,7 +342,8 @@ class MockBankingAPIClient(BankingAPIClient):
         }
         log_api_call("data_validation", url, params)
         
-        if account:
+        if account_number in self.account_lookup:
+            account = self.account_lookup[account_number]
             # Return account details
             response = {
                 "status": {

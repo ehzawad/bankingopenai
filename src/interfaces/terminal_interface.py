@@ -4,6 +4,7 @@ import json
 import uuid
 import sys
 import re
+import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 
 class TerminalInterface:
@@ -18,7 +19,6 @@ class TerminalInterface:
         self.server_url = base_url
         self.session_id = f"terminal-{str(uuid.uuid4())}"
         self.caller_id = None
-        self.history = []
         
         # Print banner
         print("=== Banking Assistant Terminal Interface ===")
@@ -28,7 +28,7 @@ class TerminalInterface:
         print("  !inject <prompt> - Inject a system prompt")
         print("  !caller <number> - Set your caller ID (phone number)")
     
-    def run(self) -> None:
+    async def run(self) -> None:
         """Run the terminal interface"""
         # Initial greeting
         self._print_assistant_message("How can I help you today?")
@@ -42,12 +42,13 @@ class TerminalInterface:
                 # Check for quit command
                 if user_input.lower() == "quit":
                     print("Goodbye!")
+                    await self._end_session()
                     break
                 
                 # Check for inject command
                 if user_input.startswith("!inject "):
                     prompt = user_input[8:]
-                    success = self._inject_prompt(prompt)
+                    success = await self._inject_prompt(prompt)
                     if success:
                         print("Prompt injected successfully.")
                     else:
@@ -61,7 +62,7 @@ class TerminalInterface:
                     continue
                 
                 # Send message to server
-                response = self._send_message(user_input)
+                response = await self._send_message(user_input)
                 
                 # Print assistant response
                 if response:
@@ -71,12 +72,13 @@ class TerminalInterface:
                 
             except KeyboardInterrupt:
                 print("\nGoodbye!")
+                await self._end_session()
                 break
             except Exception as e:
                 print(f"Error: {e}")
                 continue
     
-    def _send_message(self, message: str) -> Optional[str]:
+    async def _send_message(self, message: str) -> Optional[str]:
         """Send a message to the server
         
         Args:
@@ -116,7 +118,7 @@ class TerminalInterface:
             print(f"Error sending message: {e}")
             return None
     
-    def _inject_prompt(self, prompt: str) -> bool:
+    async def _inject_prompt(self, prompt: str) -> bool:
         """Inject a prompt into the session
         
         Args:
@@ -139,6 +141,24 @@ class TerminalInterface:
             
         except Exception as e:
             print(f"Error injecting prompt: {e}")
+            return False
+    
+    async def _end_session(self) -> bool:
+        """End the current session
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = requests.post(
+                f"{self.server_url}/end_session",
+                params={"session_id": self.session_id}
+            )
+            
+            return response.status_code == 200
+            
+        except Exception as e:
+            print(f"Error ending session: {e}")
             return False
     
     def _print_assistant_message(self, message: str) -> None:

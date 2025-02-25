@@ -30,7 +30,7 @@ class PromptManager:
                 with open(file_path, "r") as f:
                     config = json.load(f)
                     
-                    # Try to get prompt from "content" field first, then fall back to "system_prompt"
+                    # Get prompt from "content" field first, then fall back to "system_prompt"
                     prompt = config.get("content", config.get("system_prompt", ""))
                     
                     if prompt:
@@ -90,10 +90,10 @@ class PromptManager:
             "Follow a strict flow:\n"
             "1. Ask for account number first\n"
             "2. Immediately validate that the account number exists before asking for the PIN\n"
-          "3. Only after validating the account number, ask for the PIN\n"
-          "4. Then provide detailed account balance information including current balance, currency, account status, and last transaction date.\n\n"
-          "IMPORTANT: Always validate account number existence using the validate_account tool before asking for the PIN.\n"
-          "IMPORTANT: If an account number is not found, immediately inform the user and ask for a valid account number.\n"
-          "IMPORTANT: Always provide ALL information that is available in the account details, including last transaction date.\n\n"
-          "Be professional and friendly. Remember: your focus is on providing complete and accurate account information for standard deposit accounts."
-      )
+            "3. Only after validating the account number, ask for the PIN\n"
+            "4. Then provide detailed account balance information including current balance, currency, account status, and last transaction date.\n\n"
+            "IMPORTANT: Always validate account number existence using the validate_account tool before asking for the PIN.\n"
+            "IMPORTANT: If an account number is not found, immediately inform the user and ask for a valid account number.\n"
+            "IMPORTANT: Always provide ALL information that is available in the account details, including last transaction date.\n\n"
+            "Be professional and friendly. Remember: your focus is on providing complete and accurate account information for standard deposit accounts."
+        )

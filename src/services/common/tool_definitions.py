@@ -54,11 +54,8 @@ AUTH_TOOLS = [
     }
 ]
 
-# Account tools
-ACCOUNT_TOOLS = [
-    # Include the auth tools
-    *AUTH_TOOLS,
-    # Account-specific tools
+# Account-specific tools (without duplicating AUTH_TOOLS)
+ACCOUNT_SPECIFIC_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -140,6 +137,9 @@ ACCOUNT_TOOLS = [
         }
     }
 ]
+
+# Combined account tools without duplication
+ACCOUNT_TOOLS = AUTH_TOOLS + ACCOUNT_SPECIFIC_TOOLS
 
 # Mobile authentication tools
 MOBILE_AUTH_TOOLS = [
