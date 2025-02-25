@@ -733,7 +733,7 @@ class BankingChatbot(ChatInterface):
             return None
     
     def _contains_restricted_keywords(self, text: str) -> bool:
-        """Check if text contains restricted keywords
+        """Check if text contains restricted keywords using word boundary matching
         
         Args:
             text: Text to check
@@ -741,9 +741,9 @@ class BankingChatbot(ChatInterface):
         Returns:
             True if text contains restricted keywords
         """
-        text_lower = text.lower()
-        return any(keyword in text_lower for keyword in self.restricted_keywords)
-    
+        from .keyword_utils import contains_restricted_keywords
+        return contains_restricted_keywords(text, self.restricted_keywords)
+
     async def inject_prompt(self, session_id: str, prompt: str) -> bool:
         """Inject a custom prompt into a session
         

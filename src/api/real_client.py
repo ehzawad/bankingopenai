@@ -2,6 +2,7 @@
 import logging
 import requests
 import time
+import random
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -41,10 +42,10 @@ class RealBankingAPIClient(BankingAPIClient):
         mobile_number = normalize_mobile_number(mobile_number)
         call_id = call_id or generate_call_id()
         
-        # Build URL for account lookup
+        # Build URL for account lookup - Fixed typo in parameter name (sercret -> secret)
         url = f"{self.base_url}/account/account-info-by-mobile-no"
         params = {
-            "sercret": self.api_secret,
+            "secret": self.api_secret,
             "rm": "I",
             "callid": call_id,
             "connname": "MWSEIBMN",
@@ -93,15 +94,15 @@ class RealBankingAPIClient(BankingAPIClient):
         call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
         
-        # Log process information
+        # Log process message with minimal sensitive info
         self.logger.info(f"process : validate_pin_number, sender_id : {call_id}_+8809611888444_{mobile_number}, information : " + 
-                       f"{{'input_text': '{pin}', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
+                       f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
                        f"'account_number': 1, 'process_interruption': None}}")
         
-        # Build URL for PIN verification
+        # Build URL for PIN verification - Fixed typo in parameter name (sercret -> secret)
         url = f"{self.base_url}/card/verify-tpin"
         params = {
-            "sercret": self.api_secret,
+            "secret": self.api_secret,
             "rm": "I",
             "callid": call_id,
             "connname": "MWVRFTPN",
@@ -113,8 +114,10 @@ class RealBankingAPIClient(BankingAPIClient):
         self.logger.critical(f"Function: account_pin_validation_api")
         self.logger.info(f"account_pin_validation_api")
         
-        # Log API call
-        log_api_call("data_validation", url, params)
+        # Don't log PIN in parameters
+        secure_params = params.copy()
+        secure_params["crp"] = "****"
+        log_api_call("data_validation", url, secure_params)
         
         try:
             # Make the API call
@@ -126,7 +129,7 @@ class RealBankingAPIClient(BankingAPIClient):
             
             # Log success/failure message
             if response_json.get("status", {}).get("gstatus"):
-                self.logger.info(f"{{pin_number}} validation successful")
+                self.logger.info(f"PIN validation successful")
             else:
                 self.logger.info("PIN validation failed")
             
@@ -161,14 +164,13 @@ class RealBankingAPIClient(BankingAPIClient):
         mobile_number = mobile_number or "unknown"
         ref_no = generate_ref_no()
         
-        # Log request information
-        pin_part = account_number[-4:] if account_number else "unknown"
-        self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, pin number {pin_part}, required service : currentBalance")
+        # Log request information (without PIN)
+        self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, required service : currentBalance")
         
-        # Build URL for account details
+        # Build URL for account details - Fixed typo in parameter name (sercret -> secret)
         url = f"{self.base_url}/account/common-api-function"
         params = {
-            "sercret": self.api_secret,
+            "secret": self.api_secret,
             "rm": "I",
             "callid": call_id,
             "connname": "MWSADART",

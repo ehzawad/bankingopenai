@@ -110,21 +110,30 @@ class AuthenticationManager:
             The PIN or None if not found
         """
         import json
+        import re
+        
+        pin_pattern = r'\b\d{4}\b'
         
         for msg in reversed(conversation):
+            # Check user messages
             if msg["role"] == "user":
                 content = msg["content"]
-                if len(content) == 4 and content.isdigit():
-                    # Return the PIN - in a real system we would hash this
-                    return content
+                pin_match = re.search(pin_pattern, content)
+                if pin_match:
+                    return pin_match.group(0)
+            
+            # Check tool calls
             if msg["role"] == "assistant" and "tool_calls" in msg:
                 for tool_call in msg["tool_calls"]:
                     if tool_call["function"]["name"] == "validate_pin":
                         try:
                             args = json.loads(tool_call["function"]["arguments"])
                             pin = args.get("pin")
-                            if pin:
+                            if pin and pin != "****":  # Skip masked pins
                                 return pin
                         except json.JSONDecodeError:
                             continue
+                            
+            # Continue checking more messages for PIN
+        
         return None

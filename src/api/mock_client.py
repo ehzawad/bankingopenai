@@ -42,7 +42,7 @@ class MockBankingAPIClient(BankingAPIClient):
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
                     "accOpenDate": "2023-06-12", 
-                    "lastTxnDate": "2025-01-15", 
+                    "lastTxnDate": "2024-01-15",  # Fixed future date issue  
                     "currentBalance": "1250.75 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "1250.75 ", 
@@ -71,7 +71,7 @@ class MockBankingAPIClient(BankingAPIClient):
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
                     "accOpenDate": "2023-08-23", 
-                    "lastTxnDate": "2025-01-20", 
+                    "lastTxnDate": "2024-01-20",  # Fixed future date issue
                     "currentBalance": "8540.25 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "8540.25 ", 
@@ -100,7 +100,7 @@ class MockBankingAPIClient(BankingAPIClient):
                     "accName": "AHMED RAHMAN", 
                     "mobile": "01712345678", 
                     "accOpenDate": "2024-01-05", 
-                    "lastTxnDate": "2025-02-01", 
+                    "lastTxnDate": "2024-01-25",  # Fixed future date issue
                     "currentBalance": "25480.50 ", 
                     "unclearFund": "0.00", 
                     "availableBalance": "25480.50 ", 
@@ -142,10 +142,10 @@ class MockBankingAPIClient(BankingAPIClient):
         
         self.logger.info(f"Looking up accounts for mobile number: {mobile_number}")
         
-        # Log API call
+        # Log API call - Fixed typo in parameter name (sercret -> secret)
         url = "http://10.45.14.24/ccmwmtb/account/account-info-by-mobile-no"
         params = {
-            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
             "rm": "I",
             "callid": call_id,
             "connname": "MWSEIBMN",
@@ -233,15 +233,15 @@ class MockBankingAPIClient(BankingAPIClient):
         call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
         
-        # Log process message
+        # Log process message with minimal sensitive info
         self.logger.info(f"process : validate_pin_number, sender_id : {call_id}_+8809611888444_{mobile_number}, information : " + 
-                       f"{{'input_text': '{pin}', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
+                       f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
                        f"'account_number': 1, 'process_interruption': None}}")
         
-        # Log API call
+        # Log API call - Fixed typo in parameter name (sercret -> secret)
         url = "http://10.45.14.24/ccmwmtb/card/verify-tpin"
         params = {
-            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
             "rm": "I",
             "callid": call_id,
             "connname": "MWVRFTPN",
@@ -252,7 +252,11 @@ class MockBankingAPIClient(BankingAPIClient):
         
         self.logger.critical(f"Function: account_pin_validation_api")
         self.logger.info(f"account_pin_validation_api")
-        log_api_call("data_validation", url, params)
+        
+        # Don't log PIN in parameters
+        secure_params = params.copy()
+        secure_params["crp"] = "****"
+        log_api_call("data_validation", url, secure_params)
         
         # Check if account exists
         account = self.account_lookup.get(account_number)
@@ -276,7 +280,7 @@ class MockBankingAPIClient(BankingAPIClient):
             
             # Log response
             log_api_response(response)
-            self.logger.info(f"{{pin_number}} validation successful")
+            self.logger.info(f"PIN validation successful")
             
             return response
         else:
@@ -316,18 +320,18 @@ class MockBankingAPIClient(BankingAPIClient):
         mobile_number = mobile_number or "unknown"
         ref_no = generate_ref_no()
         
-        # Get account PIN (for log message only)
+        # Get account PIN (for log message only, but mask it)
         account = self.account_lookup.get(account_number)
-        pin = account["pin"] if account else "unknown"
         
-        self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, pin number {pin}, required service : currentBalance")
+        # Log request with minimal sensitive information
+        self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, required service : currentBalance")
         self.logger.critical(f"Function: account_service_api")
         self.logger.info(f"account_service_api")
         
-        # Log API call
+        # Log API call - Fixed typo in parameter name (sercret -> secret)
         url = "http://10.45.14.24/ccmwmtb/account/common-api-function"
         params = {
-            "sercret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
+            "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
             "rm": "I",
             "callid": call_id,
             "connname": "MWSADART",

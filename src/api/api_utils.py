@@ -40,6 +40,10 @@ def log_api_call(function_name: str, url: str, params: Dict[str, str]) -> None:
     """
     logger.critical(f"Function: {function_name}")
     
+    # Fix typo in parameter name: "sercret" -> "secret"
+    if "sercret" in params:
+        params["secret"] = params.pop("sercret")
+    
     # Build full URL for logging
     full_url = f"{url}?{'&'.join([f'{k}={quote_plus(str(v))}' for k, v in params.items()])}"
     logger.critical(full_url)

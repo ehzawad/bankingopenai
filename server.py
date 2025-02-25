@@ -19,9 +19,7 @@ from src.interfaces.fastapi_interface import FastAPIInterface
 from src.core.registry import ServiceRegistry
 from config.prompts.prompt_manager import PromptManager
 
-# Pydantic model for prompt injection payload
-class PromptInjection(BaseModel):
-    prompt: str
+# Removed unused PromptInjection class
 
 def setup_logger():
     """Configure logging for the application"""
