@@ -20,6 +20,8 @@ A conversational banking assistant that helps customers check their account bala
 
 #### Quick Start
 
+###### Python3.13 and I have used venv module for the python environment.
+
 1. **Install Dependencies:**
    ```
    pip install -r requirements.txt --no-deps
