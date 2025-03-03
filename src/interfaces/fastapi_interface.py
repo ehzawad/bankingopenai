@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/interfaces/fastapi_interface.py
 import logging
 import uuid
@@ -123,7 +124,7 @@ class FastAPIInterface:
                     detail="An error occurred while ending the session"
                 )
                 
-        # Add IVR-specific endpoint for phone interactions
+        # IVR-specific endpoint for phone interactions
         @self.app.post("/ivr/chat", response_model=ChatResponse, tags=["IVR"])
         async def ivr_chat(
             request: Request,

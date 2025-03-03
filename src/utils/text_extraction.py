@@ -14,12 +14,37 @@ def extract_pin(message: str) -> Optional[str]:
     Returns:
         Extracted PIN or None
     """
-    # Look for 4-digit sequences
-    pin_pattern = r'\b\d{4}\b'
+    # Try explicit PIN patterns first (higher priority)
+    explicit_patterns = [
+        r'pin\s+is\s+(\d{4})',
+        r'pin:?\s*(\d{4})',
+        r'my\s+pin\s+(?:is\s+)?(\d{4})',
+        r'pin.*?(\d{4})',
+        r'(\d{4}).*?pin'
+    ]
+    
+    for pattern in explicit_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            logger.debug(f"Extracted PIN via explicit pattern: {match.group(1)}")
+            return match.group(1)
+    
+    # For simple messages with just 4 digits, it's likely a PIN when we're awaiting one
+    if message.strip().isdigit() and len(message.strip()) == 4:
+        pin = message.strip()
+        logger.debug(f"Extracted PIN from simple 4-digit message: {pin}")
+        logger.info(f"Found PIN: {pin}")
+        return pin
+    
+    # Generic pattern for any 4 digits in the message
+    # Note: This is lower priority to avoid confusion with account numbers
+    pin_pattern = r'(?<!\d)(\d{4})(?!\d)'
     pin_match = re.search(pin_pattern, message)
     if pin_match:
-        logger.debug(f"Extracted PIN: {pin_match.group(0)}")
-        return pin_match.group(0)
+        pin = pin_match.group(1)
+        logger.debug(f"Extracted PIN: {pin}")
+        return pin
+        
     return None
 
 def extract_last_4_digits(message: str) -> Optional[str]:

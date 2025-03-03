@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/interfaces/terminal_interface.py
 import requests
 import json
@@ -18,7 +19,7 @@ class TerminalInterface:
         """
         self.server_url = base_url
         self.session_id = f"terminal-{str(uuid.uuid4())}"
-        self.caller_id = None
+        self.caller_id = None  # This now holds the mobile number for API calls
         
         # Print banner
         print("=== Banking Assistant Terminal Interface ===")
@@ -26,7 +27,7 @@ class TerminalInterface:
         print("Type 'quit' to exit")
         print("Special commands:")
         print("  !inject <prompt> - Inject a system prompt")
-        print("  !caller <number> - Set your caller ID (phone number)")
+        print("  !caller <number> - Set your caller ID (mobile number)")
     
     async def run(self) -> None:
         """Run the terminal interface"""
@@ -55,10 +56,11 @@ class TerminalInterface:
                         print("Failed to inject prompt.")
                     continue
                 
-                # Check for setting caller ID
+                # Check for setting caller ID (mobile number)
                 if user_input.startswith("!caller "):
                     self.caller_id = user_input[8:].strip()
-                    print(f"Caller ID set to: {self.caller_id}")
+                    print(f"Caller ID (mobile number) set to: {self.caller_id}")
+                    # Note: No account lookup is triggered here.
                     continue
                 
                 # Send message to server
@@ -94,7 +96,7 @@ class TerminalInterface:
                 "session_id": self.session_id
             }
             
-            # Add caller_id if set
+            # Add caller_id (mobile number) if set
             if self.caller_id:
                 payload["caller_id"] = self.caller_id
             

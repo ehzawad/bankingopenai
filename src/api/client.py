@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/api/client.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional

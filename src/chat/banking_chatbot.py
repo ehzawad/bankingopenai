@@ -109,13 +109,8 @@ class BankingChatbot(ChatInterface):
                     )
                 }
             
-            # Automatic account lookup if we have caller_id and no accounts yet
-            session_ctx = self.session_context.get_session_context(session_id)
-            caller_id = session_ctx.get("caller_id")
-            
-            if caller_id and not self.session_context.has_accounts(session_id):
-                self.logger.info(f"Performing automatic account lookup for caller: {caller_id}")
-                await self._auto_lookup_accounts(session_id, caller_id)
+            # <<< AUTOMATIC ACCOUNT LOOKUP BLOCK REMOVED >>>
+            # We no longer auto lookup accounts based solely on caller_id.
             
             # If already authenticated, try handling field-specific queries
             if self.auth_manager.is_authenticated(session_id):
@@ -125,7 +120,12 @@ class BankingChatbot(ChatInterface):
                 if field_response:
                     return {"response": field_response}
             
-            # Process authentication state based on message content
+            # If user is asking about account balance, just ask for last 4 digits
+            if "account balance" in message.lower() or "balance" in message.lower():
+                response = "To assist you with your account balance, I'll need to verify your account. Please provide the last 4 digits of your account number."
+                self.conversation_manager.add_assistant_message(session_id, response)
+                return {"response": response}
+            
             response = await self._process_authentication_state(session_id, message)
             if response:
                 return response
@@ -193,32 +193,126 @@ class BankingChatbot(ChatInterface):
         Returns:
             Response dictionary if authentication state changes, None otherwise
         """
-        # 1. Check if user message contains last 4 digits of account number
-        if (self.session_context.has_accounts(session_id) and 
-            not self.session_context.is_account_selected(session_id)):
+        # IMPORTANT: Check for awaiting PIN state FIRST - this prevents PIN from being interpreted as account digits
+        if (self.session_context.is_account_selected(session_id) and 
+            self.session_context.is_awaiting_pin(session_id) and 
+            not self.auth_manager.is_authenticated(session_id)):
             
-            last_4_digits = extract_last_4_digits(message)
-            if last_4_digits:
-                self.logger.info(f"STEP 1: Detected last 4 digits of account: {last_4_digits}")
-                account_match = await self._match_account_by_last_digits(session_id, last_4_digits)
-                if account_match:
-                    return account_match
-        
-        # 2. Check if user message is a PIN (after we've selected an account)
-        elif (self.session_context.is_account_selected(session_id) and 
-              self.session_context.is_awaiting_pin(session_id) and
-              not self.auth_manager.is_authenticated(session_id)):
-            
-            pin = extract_pin(message)
+            # PIN state has higher priority when we've already selected an account
+            # Assume any 4-digit number here is a PIN
+            if message.strip().isdigit() and len(message.strip()) == 4:
+                pin = message.strip()
+                self.logger.info(f"Detected PIN in message: {pin} (simple 4-digit message)")
+            else:
+                # Try to extract PIN using other methods
+                pin = extract_pin(message)
+                
             if pin:
-                self.logger.info(f"STEP 2: Detected PIN in message")
+                # Get the selected account
                 account_number = self.session_context.get_selected_account(session_id)
-                if account_number:
-                    pin_response = await self._handle_pin_validation(session_id, account_number, pin)
-                    if pin_response:
-                        return pin_response
-        
-        return None
+                self.logger.info(f"Handling PIN: '{pin}' for account: {account_number}")
+                self.logger.debug(f"Account number type: {type(account_number)}, length: {len(account_number) if account_number else 0}")
+                
+                if not account_number:
+                    self.logger.error("No account selected but awaiting PIN")
+                    response = "There was an error with your session. Please start over with your account number."
+                    self.conversation_manager.add_assistant_message(session_id, response)
+                    return {"response": response}
+                    
+                # Validate PIN
+                self.logger.info(f"Validating PIN: '{pin}' for account: {account_number}")
+                pin_response = await self._handle_pin_validation(session_id, account_number, pin)
+                if pin_response:
+                    self.logger.info(f"PIN validation successful")
+                    return pin_response
+                
+                # If we didn't return above, the PIN validation failed
+                self.logger.warning(f"PIN validation failed or response not handled for account {account_number} with PIN {pin}")
+                pin_check_str = await self._simple_pin_check(session_id, account_number, pin)
+                response = pin_check_str or "The PIN you entered is incorrect. Please try again with the correct 4-digit PIN."
+                self.conversation_manager.add_assistant_message(session_id, response)
+                return {"response": response}
+                
+            # No PIN found in message
+            response = "I need your 4-digit PIN to authenticate your account. Please enter only your PIN."
+            self.conversation_manager.add_assistant_message(session_id, response)
+            return {"response": response}
+            
+        # STEP 1: Not awaiting PIN, so extract last 4 digits from message
+        last_4_digits = extract_last_4_digits(message)
+        if last_4_digits:
+            self.logger.info(f"STEP 1: Detected last 4 digits of account: {last_4_digits}")
+            
+            # Get caller ID for account lookup
+            caller_id = self.session_context.get_caller_id(session_id)
+            if not caller_id:
+                self.logger.warning("No caller ID available for account lookup")
+                response = "I need your mobile number to proceed. Please contact customer support."
+                self.conversation_manager.add_assistant_message(session_id, response)
+                return {"response": response}
+                
+            # STEP 2: Retrieve accounts for this caller to check against
+            self.logger.info(f"Retrieving accounts for caller: {caller_id}")
+            try:
+                mobile_auth_service = self.registry.get_service("mobile_auth")
+                if not mobile_auth_service:
+                    self.logger.error("Mobile auth service not available")
+                    response = "Sorry, the account verification service is currently unavailable."
+                    self.conversation_manager.add_assistant_message(session_id, response)
+                    return {"response": response}
+                    
+                result = mobile_auth_service.execute_tool("get_accounts_by_mobile", {
+                    "mobile_number": caller_id,
+                    "call_id": self.session_context.get_call_id(session_id)
+                })
+                
+                if not result.get("status") == "success" or not result.get("accounts"):
+                    self.logger.warning(f"No accounts found for caller {caller_id}")
+                    response = "I'm sorry, but I couldn't find any accounts associated with your phone number."
+                    self.conversation_manager.add_assistant_message(session_id, response)
+                    return {"response": response}
+                    
+                # STEP 3: Update session with retrieved accounts
+                accounts = result["accounts"]
+                self.logger.info(f"Found {len(accounts)} accounts for {caller_id}")
+                self.session_context.set_retrieved_accounts(session_id, accounts)
+                
+                # STEP 4: Match the last 4 digits against retrieved accounts
+                match_found = False
+                for account in accounts:
+                    if account["account_number"].endswith(last_4_digits):
+                        match_found = True
+                        account_number = account["account_number"]
+                        masked_account = account["masked_account"]
+                        self.logger.info(f"Matched account {account_number} with last 4 digits {last_4_digits}")
+                        
+                        # STEP 5: Set selected account and ask for PIN
+                        self.session_context.set_selected_account(session_id, account_number)
+                        self.logger.info(f"Set selected account {account_number} for session {session_id}")
+                        
+                        # Add system instruction
+                        self.conversation_manager.add_system_message(
+                            session_id,
+                            f"User confirmed account {masked_account}. Now ask for 4-digit PIN to authenticate."
+                        )
+                        
+                        # Ask user for PIN
+                        response = f"Thank you for confirming your account {masked_account}. For security, please provide your 4-digit PIN."
+                        self.conversation_manager.add_assistant_message(session_id, response)
+                        return {"response": response}
+                
+                # No matching account found
+                if not match_found:
+                    self.logger.warning(f"No account found with last 4 digits: {last_4_digits}")
+                    response = f"I'm sorry, but I couldn't find an account ending with {last_4_digits} for this phone number. Please check and try again."
+                    self.conversation_manager.add_assistant_message(session_id, response)
+                    return {"response": response}
+                
+            except Exception as e:
+                self.logger.error(f"Error during account lookup: {e}", exc_info=True)
+                response = "Sorry, I'm having trouble retrieving your account information. Please try again later."
+                self.conversation_manager.add_assistant_message(session_id, response)
+                return {"response": response}
     
     def _add_contextual_guidance(self, session_id: str) -> None:
         """Add contextual guidance for the assistant based on session state
@@ -226,11 +320,7 @@ class BankingChatbot(ChatInterface):
         Args:
             session_id: The session identifier
         """
-        # If we have accounts but no selection yet, guide the assistant to ask for last 4 digits
-        if (self.session_context.has_accounts(session_id) and 
-            not self.session_context.is_account_selected(session_id)):
-            
-            # Add explicit guidance to the assistant
+        if self.session_context.has_accounts(session_id) and not self.session_context.is_account_selected(session_id):
             self.conversation_manager.add_system_message(
                 session_id,
                 "The user has accounts associated with their phone number. "
@@ -244,14 +334,12 @@ class BankingChatbot(ChatInterface):
         Args:
             session_id: The session identifier
         """
-        # Add reminder to include all account information when authenticated
         if self.auth_manager.is_authenticated(session_id):
             self.conversation_manager.add_system_message(
                 session_id,
                 "Remember to include ALL available account information in your response, "
                 "including balance, currency, account status, and last transaction date if available."
             )
-        # Add security guidance if not authenticated yet
         elif self.session_context.has_accounts(session_id):
             if self.session_context.is_account_selected(session_id):
                 self.conversation_manager.add_system_message(
@@ -264,85 +352,6 @@ class BankingChatbot(ChatInterface):
                     "The user has accounts, but hasn't selected one yet. Ask them to provide the "
                     "last 4 digits of their account number. DO NOT list or reveal any account numbers."
                 )
-    
-    async def _auto_lookup_accounts(self, session_id: str, mobile_number: str) -> None:
-        """Automatically look up accounts for a mobile number
-        
-        Args:
-            session_id: The session identifier
-            mobile_number: The mobile number to look up
-        """
-        self.logger.info(f"Auto-looking up accounts for mobile: {mobile_number}")
-        
-        # Get call ID from session context
-        call_id = self.session_context.get_call_id(session_id)
-        
-        try:
-            # Execute account lookup directly
-            mobile_auth_service = self.registry.get_service("mobile_auth")
-            if not mobile_auth_service:
-                self.logger.error("Mobile auth service not found")
-                return
-                
-            result = mobile_auth_service.execute_tool("get_accounts_by_mobile", {
-                "mobile_number": mobile_number,
-                "call_id": call_id,
-                "session_id": session_id
-            })
-            
-            self.logger.info(f"Auto account lookup result: {result['status']}")
-            
-            if result["status"] == "success" and result["accounts"]:
-                # Store accounts in session context
-                self.session_context.set_retrieved_accounts(session_id, result["accounts"])
-                
-                # Add sanitized result to conversation context
-                sanitized_result = {
-                    "status": "success",
-                    "message": f"Found accounts associated with the phone number",
-                    "accounts_found": True
-                }
-                
-                # Add synthetic tool call to conversation for context
-                tool_call = {
-                    "id": "auto_accounts_lookup",
-                    "type": "function",
-                    "function": {
-                        "name": "get_accounts_by_mobile",
-                        "arguments": json.dumps({"mobile_number": mobile_number})
-                    }
-                }
-                
-                self.conversation_manager.add_tool_call(session_id, tool_call)
-                self.conversation_manager.add_tool_response(
-                    session_id, 
-                    "auto_accounts_lookup",
-                    json.dumps(sanitized_result)
-                )
-                
-                # Add a system message to guide the assistant
-                accounts = result["accounts"]
-                num_accounts = len(accounts)
-                
-                self.conversation_manager.add_system_message(
-                    session_id,
-                    f"The system has found {num_accounts} account(s) associated with the caller's phone number. "
-                    "Ask the user to provide the last 4 digits of their account number to confirm which account they want to access. "
-                    "IMPORTANT: Do not list or reveal any account numbers to the user. This is a security measure."
-                )
-                
-                self.logger.info(f"Retrieved {num_accounts} accounts for caller {mobile_number}")
-            else:
-                self.logger.warning(f"No accounts found for mobile number: {mobile_number}")
-                # Add system message for no accounts found
-                self.conversation_manager.add_system_message(
-                    session_id,
-                    "No accounts were found associated with the caller's phone number. "
-                    "Inform the user that no accounts were found for their phone number."
-                )
-            
-        except Exception as e:
-            self.logger.error(f"Error during auto account lookup: {e}")
     
     async def _match_account_by_last_digits(
         self, 
@@ -359,35 +368,78 @@ class BankingChatbot(ChatInterface):
             Response dict if account found, None otherwise
         """
         accounts = self.session_context.get_retrieved_accounts(session_id)
+        caller_id = self.session_context.get_caller_id(session_id)
+        self.logger.info(f"Matching last 4 digits {last_digits} for caller {caller_id} with {len(accounts)} accounts")
         
+        # Check if the provided last digits match any account in the system
+        valid_account = False
+        for account in accounts:
+            if account["account_number"].endswith(last_digits):
+                valid_account = True
+                break
+                
+        if not valid_account:
+            self.logger.warning(f"No account found ending with digits: {last_digits}")
+            response = f"I'm sorry, but I couldn't find an account ending with {last_digits} for this mobile number. Please check the number and try again."
+            self.conversation_manager.add_assistant_message(session_id, response)
+            return {"response": response}
+        
+        # Log all available accounts for debugging
+        for account in accounts:
+            self.logger.info(f"Available account: {account['account_number']} ends with {account['account_number'][-4:]}")
+        
+        found_match = False
         for account in accounts:
             account_number = account["account_number"]
             if account_number.endswith(last_digits):
+                found_match = True
                 self.logger.info(f"Matched account {account_number} by last digits {last_digits}")
                 
-                # Store selected account - IMPORTANT: This sets the account_selected flag to true
+                # If validation succeeded, continue with the flow
                 self.session_context.set_selected_account(session_id, account_number)
-                
-                # Add validation to conversation history
+                stored_account = self.session_context.get_selected_account(session_id)
+                self.logger.info(f"CRITICAL DEBUG: Stored full account number: {stored_account}")
                 masked_number = account["masked_account"]
-                
-                # Add system message to guide the assistant
                 self.conversation_manager.add_system_message(
                     session_id,
                     f"User confirmed account {masked_number} by providing last 4 digits {last_digits}. "
-                    f"Ask for their 4-digit PIN to authenticate."
+                    "Ask for their 4-digit PIN to authenticate."
                 )
-                
                 response = f"Thank you for confirming your account {masked_number}. For security, please provide your 4-digit PIN."
                 self.conversation_manager.add_assistant_message(session_id, response)
                 return {"response": response}
         
-        # No match found
-        self.logger.warning(f"No account found ending with digits: {last_digits}")
-        response = "I'm sorry, but I couldn't find an account ending with those digits. Please check the number and try again."
-        self.conversation_manager.add_assistant_message(session_id, response)
-        return {"response": response}
+        if not found_match:
+            # Get the correct last 4 digits of available accounts
+            available_last_digits = [account["account_number"][-4:] for account in accounts]
+            self.logger.warning(f"No account found ending with digits: {last_digits}. Available last digits: {available_last_digits}")
+            
+            response = f"I'm sorry, but I couldn't find an account ending with {last_digits} for this mobile number. Please check the number and try again."
+            self.conversation_manager.add_assistant_message(session_id, response)
+            return {"response": response}
     
+    async def _simple_pin_check(self, session_id: str, account_number: str, pin: str) -> Optional[str]:
+        """Simple PIN check for debugging purposes
+        
+        Args:
+            session_id: Session ID
+            account_number: Account number
+            pin: PIN to check
+            
+        Returns:
+            Debug message if available
+        """
+        accounts = self.session_context.get_retrieved_accounts(session_id)
+        for account in accounts:
+            if account["account_number"] == account_number:
+                self.logger.info(f"Found account {account_number} with PIN {account.get('pin', 'unknown')}")
+                expected_pin = account.get("pin")
+                if expected_pin == pin:
+                    return f"DEBUG: PIN should be valid! Expected: {expected_pin}, got: {pin}"
+                else:
+                    return f"DEBUG: PIN incorrect. Expected: {expected_pin}, got: {pin}"
+        return None
+        
     async def _handle_pin_validation(
         self, 
         session_id: str, 
@@ -404,29 +456,34 @@ class BankingChatbot(ChatInterface):
         Returns:
             Response dict if validation succeeds, None otherwise
         """
-        self.logger.info(f"Validating PIN for account {account_number}")
+        if not account_number or len(account_number) < 10:
+            self.logger.error(f"Invalid account number format for PIN validation: {account_number}")
+            response = "I'm sorry, but there was an issue with your account identification. Please try again by providing the last 4 digits of your account."
+            self.conversation_manager.add_assistant_message(session_id, response)
+            self.session_context.update_session_context(session_id, {
+                "account_selected": False,
+                "selected_account": None,
+                "awaiting_pin": False
+            })
+            return {"response": response}
         
+        self.logger.info(f"Validating PIN for account {account_number}")
         try:
-            # Get caller ID from session context
             session_ctx = self.session_context.get_session_context(session_id)
             caller_id = session_ctx.get("caller_id")
-            
-            # Validate PIN
             auth_service = self.registry.get_service("authentication")
             if not auth_service:
                 self.logger.error("Authentication service not found")
                 return None
-                
-            # Execute PIN validation
             pin_result = auth_service.execute_tool("validate_pin", {
                 "account_number": account_number,
                 "pin": pin,
                 "mobile_number": caller_id
             })
-            
             self.logger.info(f"PIN validation result: {pin_result}")
+            is_valid = pin_result.get("valid", False)
+            self.logger.info(f"PIN validation success: {is_valid}")
             
-            # Add synthetic tool call and response for PIN validation
             pin_tool_call = {
                 "id": "pin_validation_call",
                 "type": "function",
@@ -434,45 +491,33 @@ class BankingChatbot(ChatInterface):
                     "name": "validate_pin",
                     "arguments": json.dumps({
                         "account_number": account_number, 
-                        "pin": "****",  # Hide actual PIN in the conversation context
+                        "pin": "****",
                         "mobile_number": caller_id
                     })
                 }
             }
-            
-            # Create a sanitized version of the result that doesn't include account details
             sanitized_result = {
-                "valid": pin_result.get("valid", False),
+                "valid": is_valid,
                 "message": pin_result.get("message", "")
             }
-            
             self.conversation_manager.add_tool_call(session_id, pin_tool_call)
             self.conversation_manager.add_tool_response(
                 session_id,
                 "pin_validation_call",
                 json.dumps(sanitized_result)
             )
-            
-            # If PIN is valid, get account details
             if pin_result.get("valid", False):
-                # Authenticate session
                 self.auth_manager.authenticate_session(session_id, account_number)
-                
-                # Get account details
                 account_service = self.registry.get_service("account")
                 if not account_service:
                     self.logger.error("Account service not found")
                     return None
-                    
                 details_result = account_service.execute_tool("get_account_details", {
                     "account_number": account_number,
                     "pin": pin,
                     "mobile_number": caller_id
                 })
-                
                 self.logger.info(f"Account details retrieved successfully: {details_result['status']}")
-                
-                # Add synthetic tool call and response for account details
                 details_tool_call = {
                     "id": "get_account_details_call",
                     "type": "function",
@@ -480,20 +525,17 @@ class BankingChatbot(ChatInterface):
                         "name": "get_account_details",
                         "arguments": json.dumps({
                             "account_number": account_number, 
-                            "pin": "****",  # Hide actual PIN
+                            "pin": "****",
                             "mobile_number": caller_id
                         })
                     }
                 }
-                
                 self.conversation_manager.add_tool_call(session_id, details_tool_call)
                 self.conversation_manager.add_tool_response(
                     session_id,
                     "get_account_details_call",
                     json.dumps(details_result)
                 )
-                
-                # Return formatted response with account details
                 if details_result.get("status") == "success":
                     data = details_result["data"]
                     response = (
@@ -503,20 +545,15 @@ class BankingChatbot(ChatInterface):
                         f"- **Account Status:** {data['account_status']}\n"
                         f"- **Last Transaction Date:** {data['last_transaction']}"
                     )
-                    
-                    # Add assistant response to conversation
                     self.conversation_manager.add_assistant_message(session_id, response)
-                    
                     return {"response": response}
             else:
-                # Invalid PIN response
                 response = "Sorry, the PIN you provided is incorrect. Please try again with the correct 4-digit PIN."
                 self.conversation_manager.add_assistant_message(session_id, response)
                 return {"response": response}
-                
+                    
         except Exception as e:
             self.logger.error(f"Error during PIN validation: {e}", exc_info=True)
-            
         return None
     
     async def _process_tool_calls(self, session_id: str, tool_calls: List[Dict[str, Any]]) -> None:
@@ -527,29 +564,89 @@ class BankingChatbot(ChatInterface):
             tool_calls: List of tool calls to process
         """
         self.logger.info(f"Processing {len(tool_calls)} tool call(s)")
-        
-        # Get context info for API calls
         session_ctx = self.session_context.get_session_context(session_id)
         caller_id = session_ctx.get("caller_id")
         call_id = session_ctx.get("call_id")
         
+        # First process validate_account calls if present
+        account_validation_result = None
+        account_validation_tool_id = None
+        
         for tool_call in tool_calls:
             function_name = tool_call["function"]["name"]
+            if function_name == "validate_account":
+                function_args = json.loads(tool_call["function"]["arguments"])
+                sanitized_args = function_args.copy()
+                if caller_id:
+                    function_args["mobile_number"] = caller_id
+                    sanitized_args["mobile_number"] = caller_id
+                
+                self.logger.info(f"Executing account validation first: {function_name} with args: {sanitized_args}")
+                
+                try:
+                    result = self.registry.execute_tool(function_name, function_args)
+                    self.logger.debug(f"Account validation result: {result}")
+                    sanitized_tool_call = tool_call.copy()
+                    sanitized_tool_call["function"] = sanitized_tool_call["function"].copy()
+                    sanitized_tool_call["function"]["arguments"] = json.dumps(sanitized_args)
+                    self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
+                    
+                    # Store the validation result
+                    account_validation_result = result
+                    account_validation_tool_id = tool_call.get("id", "unknown")
+                    
+                    # Add the tool response
+                    self.conversation_manager.add_tool_response(
+                        session_id,
+                        account_validation_tool_id,
+                        json.dumps(result)
+                    )
+                    
+                    # Process the account validation result
+                    if not result.get("valid", False):
+                        self.logger.warning(f"Account validation failed: {result.get('message')}")
+                        
+                        # Add a message to inform user about invalid account
+                        last_digits = function_args.get("account_number")
+                        if len(last_digits) <= 4:
+                            response = f"I'm sorry, but I couldn't find an account ending with {last_digits} associated with your phone number. Please check the last 4 digits of your account number and try again."
+                            self.conversation_manager.add_assistant_message(session_id, response)
+                            
+                            # Skip processing remaining tool calls
+                            return
+                except Exception as e:
+                    self.logger.error(f"Error during account validation: {e}")
+                    result = {"error": str(e), "valid": False}
+                    self.conversation_manager.add_tool_response(
+                        session_id,
+                        tool_call.get("id", "unknown"),
+                        json.dumps(result)
+                    )
+                
+                # Don't process this tool call again in the main loop
+                break
+        
+        # Now process the remaining tool calls
+        for tool_call in tool_calls:
+            function_name = tool_call["function"]["name"]
+            # Skip the validate_account call we already processed
+            if function_name == "validate_account" and tool_call.get("id") == account_validation_tool_id:
+                continue
+                
+            # Skip validate_pin if account validation failed
+            if function_name == "validate_pin" and account_validation_result and not account_validation_result.get("valid", False):
+                self.logger.info(f"Skipping PIN validation because account validation failed")
+                continue
+                
             function_args = json.loads(tool_call["function"]["arguments"])
-            
-            # Create sanitized arguments for logging to conversation
             sanitized_args = function_args.copy()
             if "pin" in sanitized_args:
-                sanitized_args["pin"] = "****"  # Hide PIN
-            
-            # Add additional context to args if needed
+                sanitized_args["pin"] = "****"
             if function_name == "get_accounts_by_mobile" and "call_id" not in function_args:
                 function_args["call_id"] = call_id
                 function_args["session_id"] = session_id
                 sanitized_args["call_id"] = call_id
                 sanitized_args["session_id"] = session_id
-                
-            # Add mobile_number to account-related functions when caller_id is available
             if caller_id and function_name in ["validate_account", "validate_pin", "get_account_details"]:
                 function_args["mobile_number"] = caller_id
                 sanitized_args["mobile_number"] = caller_id
@@ -557,19 +654,12 @@ class BankingChatbot(ChatInterface):
             self.logger.info(f"Executing tool: {function_name} with args: {sanitized_args}")
             
             try:
-                # Execute the tool with the real arguments
                 result = self.registry.execute_tool(function_name, function_args)
                 self.logger.debug(f"Tool execution result: {result}")
-                
-                # Create a sanitized tool call for the conversation
                 sanitized_tool_call = tool_call.copy()
                 sanitized_tool_call["function"] = sanitized_tool_call["function"].copy()
                 sanitized_tool_call["function"]["arguments"] = json.dumps(sanitized_args)
-                
-                # Add sanitized tool call to conversation
                 self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
-                
-                # Process tool results and update session state
                 await self._process_tool_result(
                     session_id, 
                     function_name, 
@@ -577,31 +667,27 @@ class BankingChatbot(ChatInterface):
                     result, 
                     tool_call.get("id", "unknown")
                 )
-                
             except ValueError as e:
                 self.logger.error(f"Error executing tool: {e}")
                 result = {"error": str(e)}
-                
-                # Add error response to conversation
                 self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
                 self.conversation_manager.add_tool_response(
                     session_id,
                     tool_call.get("id", "unknown"),
                     json.dumps(result)
                 )
-                
             except KeyError as e:
                 self.logger.error(f"Missing required parameter: {e}")
                 result = {"error": f"Missing required parameter: {e}"}
-                
-                # Add error response to conversation
                 self.conversation_manager.add_tool_call(session_id, sanitized_tool_call)
                 self.conversation_manager.add_tool_response(
                     session_id,
                     tool_call.get("id", "unknown"),
                     json.dumps(result)
                 )
-    
+
+
+
     async def _process_tool_result(
         self, 
         session_id: str, 
@@ -635,6 +721,11 @@ class BankingChatbot(ChatInterface):
             # Update session state if accounts were found
             if result["status"] == "success":
                 self.logger.info(f"Storing {len(result['accounts'])} accounts from get_accounts_by_mobile")
+                
+                # Log the actual account numbers being stored for debugging
+                for account in result["accounts"]:
+                    self.logger.info(f"Found account: {account['account_number']} (masked: {account['masked_account']})")
+                    
                 self.session_context.set_retrieved_accounts(session_id, result["accounts"])
                 
                 # Add a system message to instruct not to show account numbers
@@ -655,21 +746,121 @@ class BankingChatbot(ChatInterface):
             
             # Update session state based on tool result
             if function_name == "validate_account" and result.get("valid", False):
-                account_number = function_args.get("account_number")
+                # CRITICAL FIX: For validate_account, try to extract the full account number
+                # from the API response if available
+                short_account_number = function_args.get("account_number")
+                
+                # Check if this is a short account number
+                if len(short_account_number) <= 4:
+                    # Get the mobile number from session
+                    session_ctx = self.session_context.get_session_context(session_id)
+                    mobile_number = session_ctx.get("caller_id")
+                    
+                    # Try to find the full account number
+                    full_account_number = None
+                    
+                    # First check if we have accounts in the session
+                    if self.session_context.has_accounts(session_id):
+                        accounts = self.session_context.get_retrieved_accounts(session_id)
+                        for account in accounts:
+                            if account["account_number"].endswith(short_account_number):
+                                full_account_number = account["account_number"]
+                                self.logger.info(f"Using full account number {full_account_number} found in session")
+                                break
+                    
+                    # If we still don't have a full account number, try to get accounts by mobile
+                    if not full_account_number and mobile_number:
+                        try:
+                            # Get the mobile auth service
+                            mobile_auth_service = self.registry.get_service("mobile_auth")
+                            if mobile_auth_service:
+                                # Get accounts by mobile
+                                accounts_result = mobile_auth_service.execute_tool("get_accounts_by_mobile", {
+                                    "mobile_number": mobile_number
+                                })
+                                
+                                if accounts_result["status"] == "success":
+                                    for account in accounts_result["accounts"]:
+                                        if account["account_number"].endswith(short_account_number):
+                                            full_account_number = account["account_number"]
+                                            self.logger.info(f"Using full account number {full_account_number} from mobile lookup")
+                                            break
+                        except Exception as e:
+                            self.logger.error(f"Error trying to find full account number: {e}")
+                    
+                    # Use the full account number if we found one
+                    if full_account_number:
+                        account_number = full_account_number
+                        self.logger.info(f"Setting full account number: {account_number} instead of short: {short_account_number}")
+                    else:
+                        self.logger.warning(f"Could not find full account number for {short_account_number}")
+                        account_number = short_account_number
+                else:
+                    # We already have a full account number
+                    account_number = short_account_number
+                    
+                # Now set the selected account
                 self.logger.info(f"Account {account_number} validated, marking as selected and awaiting PIN")
-                # Mark account as selected and awaiting PIN
-                self.session_context.set_selected_account(session_id, account_number)
+                
+                # Try to set the selected account, handle validation errors
+                try:
+                    # Mark account as selected and awaiting PIN
+                    self.session_context.set_selected_account(session_id, account_number)
+                except ValueError as e:
+                    self.logger.error(f"Error setting selected account: {e}")
+                    # Add guidance for the assistant
+                    self.conversation_manager.add_system_message(
+                        session_id,
+                        "There was an error with the account number validation. Ask the user to try again with the correct account number."
+                    )
             
+
+# This is a patch to fix the last issue in the _process_tool_result method
+
             elif function_name == "validate_pin" and result.get("valid", False):
                 account_number = function_args.get("account_number")
+                
+                # FINAL FIX: Check if this is a short account number
+                if len(account_number) <= 4:
+                    # Get the mobile number from session
+                    session_ctx = self.session_context.get_session_context(session_id)
+                    mobile_number = session_ctx.get("caller_id")
+                    
+                    # Try to find the full account number
+                    full_account_number = None
+                    
+                    # First check if we have an already selected account in the session
+                    selected_account = self.session_context.get_selected_account(session_id)
+                    if selected_account and len(selected_account) > 4:
+                        full_account_number = selected_account
+                        self.logger.info(f"Using previously selected full account number: {full_account_number}")
+                        
+                    # If not found, check accounts in the session
+                    if not full_account_number and self.session_context.has_accounts(session_id):
+                        accounts = self.session_context.get_retrieved_accounts(session_id)
+                        for account in accounts:
+                            if account["account_number"].endswith(account_number):
+                                full_account_number = account["account_number"]
+                                self.logger.info(f"Using full account number {full_account_number} found in session")
+                                break
+                                
+                    # Use the full account number if we found one
+                    if full_account_number:
+                        account_number = full_account_number
+                        self.logger.info(f"Using full account number: {account_number} for authentication")
+                
                 self.logger.info(f"PIN validated for account {account_number}, marking session as authenticated")
                 self.auth_manager.authenticate_session(session_id, account_number)
+            
+                # account_number = function_args.get("account_number")
+                # self.logger.info(f"PIN validated for account {account_number}, marking session as authenticated")
+                # self.auth_manager.authenticate_session(session_id, account_number)
             
             elif function_name == "get_account_details" and result.get("status") == "success":
                 account_number = function_args.get("account_number")
                 self.logger.info(f"Got account details for {account_number}, marking session as authenticated")
                 self.auth_manager.authenticate_session(session_id, account_number)
-    
+        
     async def _handle_field_query(self, session_id: str, account_number: str, message: str) -> Optional[str]:
         """Handle field-specific queries for authenticated users
         
@@ -682,8 +873,6 @@ class BankingChatbot(ChatInterface):
             Response for field query or None if not a field query
         """
         message_lower = message.lower()
-        
-        # Extract field name from message
         field_name = None
         if "balance" in message_lower or "how much" in message_lower:
             field_name = "balance"
@@ -698,23 +887,17 @@ class BankingChatbot(ChatInterface):
         else:
             return None
         
-        # Use a flow to handle the query
         context = {
             "account_number": account_number,
             "field_name": field_name
         }
         
         try:
-            # Execute account query flow
             result = await self.flow_manager.execute_flow("account_query", context)
-            
-            # If flow is successful, process the result
             if "get_account_field" in result.get("executed_steps", []):
                 field_result = result["flow_results"]["get_account_field"]["result"]
-                
                 if field_result.get("status") == "success":
                     value = field_result.get("value")
-                    
                     if field_name == "balance":
                         return f"Your current balance is {value}."
                     elif field_name == "last_transaction":
@@ -722,22 +905,18 @@ class BankingChatbot(ChatInterface):
                     elif field_name == "account_status":
                         return f"Your account status is '{value}'."
                     elif field_name == "currency":
-                        # Check if we have currency details
                         if "get_currency_details" in result.get("executed_steps", []):
                             currency_result = result["flow_results"]["get_currency_details"]["result"]
                             currency_name = currency_result.get("name", value)
                             return f"Your account is denominated in {currency_name} ({value})."
                         return f"Your account currency is {value}."
                     elif field_name == "account_type":
-                        # Check if we have account type details
                         if "get_account_type_details" in result.get("executed_steps", []):
                             type_result = result["flow_results"]["get_account_type_details"]["result"]
                             type_name = type_result.get("name", value.capitalize())
                             return f"You have a {type_name} ({value})."
                         return f"Your account type is {value}."
-            
             return None
-            
         except Exception as e:
             self.logger.error(f"Error handling field query: {e}", exc_info=True)
             return None

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/core/registry.py
 import logging
 from typing import Dict, Any, List, Optional
@@ -63,7 +64,6 @@ class ServiceRegistry:
                 if tool["function"]["name"] == tool_name:
                     self.logger.info(f"Executing tool: {tool_name} with args: {args}")
                     return service.execute_tool(tool_name, args)
-        
         self.logger.error(f"No service found with tool: {tool_name}")
         raise ValueError(f"Tool not found: {tool_name}")
     

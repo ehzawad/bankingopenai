@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/core/flow/flow_manager.py
 import logging
 from typing import Dict, Any, List, Callable, Optional
@@ -65,16 +66,11 @@ class FlowStep:
             Dictionary of arguments for tool
         """
         args = {}
-        
-        # Add required args
         for arg in self.required_args:
             args[arg] = context[arg]
-            
-        # Add optional args if available
         for arg in self.optional_args:
             if arg in context:
                 args[arg] = context[arg]
-                
         return args
     
     def process_result(self, args: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
@@ -104,7 +100,6 @@ class FlowStep:
         if self.postcondition:
             return self.postcondition(args, result)
         return True
-
 
 class ServiceFlow:
     """Defines a sequence of service tool calls"""
@@ -138,10 +133,7 @@ class ServiceFlow:
         """
         context = initial_context.copy()
         executed_steps = []
-        
-        # Add flow results container
         context["flow_results"] = {}
-        
         self.logger.info(f"Starting flow execution: {self.name}")
         
         for step in self.steps:
@@ -151,11 +143,8 @@ class ServiceFlow:
                 
             self.logger.info(f"Executing step: {step.name}")
             args = step.build_args(context)
-            
             try:
                 result = registry.execute_tool(step.tool_name, args)
-                
-                # Validate result
                 if not step.validate_result(args, result):
                     self.logger.warning(f"Step {step.name} failed validation, stopping flow")
                     context["flow_results"][step.name] = {
@@ -163,20 +152,14 @@ class ServiceFlow:
                         "result": result
                     }
                     break
-                
-                # Store result in context
                 context["flow_results"][step.name] = {
                     "status": "success",
                     "result": result
                 }
-                
-                # Process result and extract values
                 extracted = step.process_result(args, result)
                 for key, value in extracted.items():
                     context[key] = value
-                
                 executed_steps.append(step.name)
-                
             except Exception as e:
                 self.logger.error(f"Error executing step {step.name}: {e}")
                 context["flow_results"][step.name] = {
@@ -187,9 +170,7 @@ class ServiceFlow:
         
         context["executed_steps"] = executed_steps
         self.logger.info(f"Flow {self.name} completed with {len(executed_steps)} steps")
-        
         return context
-
 
 class FlowManager:
     """Manages and executes service flows"""
@@ -234,14 +215,13 @@ class FlowManager:
         if flow_name not in self.flows:
             self.logger.error(f"Flow not found: {flow_name}")
             raise ValueError(f"Flow not found: {flow_name}")
-            
         flow = self.flows[flow_name]
         return await flow.execute(self.registry, context)
         
     def _register_standard_flows(self) -> None:
         """Register standard flows"""
         
-        # Account number authentication flow
+        # Authentication flow: user provides account number (last 4 digits confirmation) and PIN.
         auth_flow = ServiceFlow(
             name="authentication",
             description="Authenticate a user with account number and PIN",
@@ -258,7 +238,7 @@ class FlowManager:
                     name="validate_pin",
                     tool_name="validate_pin",
                     required_args=["account_number", "pin"],
-                    precondition=lambda ctx: ctx.get("validate_account_valid", False) == True,
+                    precondition=lambda ctx: ctx.get("validate_account_valid", False) == True and not ctx.get("validate_pin_valid", False),
                     result_processor=lambda args, result: {
                         "validate_pin_valid": result.get("valid", False)
                     }
@@ -272,39 +252,7 @@ class FlowManager:
             ]
         )
         
-        # Mobile number authentication flow
-        mobile_auth_flow = ServiceFlow(
-            name="mobile_authentication",
-            description="Authenticate a user with mobile number and PIN",
-            steps=[
-                FlowStep(
-                    name="get_accounts_by_mobile",
-                    tool_name="get_accounts_by_mobile",
-                    required_args=["mobile_number"],
-                    result_processor=lambda args, result: {
-                        "has_accounts": result.get("status") == "success" and len(result.get("accounts", [])) > 0,
-                        "account_number": result.get("accounts", [{}])[0].get("account_number", "") if result.get("status") == "success" and result.get("accounts") else ""
-                    }
-                ),
-                FlowStep(
-                    name="validate_pin",
-                    tool_name="validate_pin",
-                    required_args=["account_number", "pin"],
-                    precondition=lambda ctx: ctx.get("has_accounts", False) and ctx.get("account_number", ""),
-                    result_processor=lambda args, result: {
-                        "validate_pin_valid": result.get("valid", False)
-                    }
-                ),
-                FlowStep(
-                    name="get_account_details",
-                    tool_name="get_account_details",
-                    required_args=["account_number", "pin"],
-                    precondition=lambda ctx: ctx.get("validate_pin_valid", False) == True
-                )
-            ]
-        )
-        
-        # Account query flow
+        # Account query flow remains unchanged.
         account_query_flow = ServiceFlow(
             name="account_query",
             description="Query specific account information",
@@ -337,6 +285,7 @@ class FlowManager:
             ]
         )
         
+        # Note: The previous mobile_authentication flow is removed since we now simply use the mobile number as a static configuration.
+        
         self.register_flow(auth_flow)
-        self.register_flow(mobile_auth_flow)
         self.register_flow(account_query_flow)

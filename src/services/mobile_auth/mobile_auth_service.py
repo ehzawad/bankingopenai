@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/services/mobile_auth/mobile_auth_service.py
 import logging
 from typing import Dict, Any, List, Optional
@@ -7,7 +8,9 @@ from ...api.client import BankingAPIClient
 from ..common.tool_definitions import MOBILE_AUTH_TOOLS
 
 class MobileAuthService(ServiceInterface):
-    """Service for mobile-based authentication operations"""
+    """Service for mobile-based authentication operations.
+       This simplified version uses the mobile number only as a parameter for API calls.
+    """
     
     def __init__(self, api_client: BankingAPIClient):
         self.api_client = api_client
@@ -36,57 +39,32 @@ class MobileAuthService(ServiceInterface):
             ValueError: If the tool name is not recognized
         """
         self.logger.debug(f"Executing mobile auth tool: {tool_name} with args: {args}")
-        
         if tool_name == "get_accounts_by_mobile":
-            return self.get_accounts_by_mobile(
-                args["mobile_number"],
-                args.get("call_id"),
-                args.get("session_id")
-            )
+            return self.get_accounts_by_mobile(args["mobile_number"], args.get("call_id"))
         else:
             self.logger.error(f"Unknown tool: {tool_name}")
             raise ValueError(f"Unknown tool: {tool_name}")
     
-    def get_accounts_by_mobile(
-        self, 
-        mobile_number: str, 
-        call_id: Optional[str] = None,
-        session_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def get_accounts_by_mobile(self, mobile_number: str, call_id: Optional[str] = None) -> Dict[str, Any]:
         """Get accounts associated with a mobile number
         
         Args:
             mobile_number: The mobile number to lookup
             call_id: Optional call ID for API calls
-            session_id: Optional session ID for context
             
         Returns:
             Dictionary with account numbers and validation result
         """
-        # Log details for debugging
-        self.logger.info(f"Looking up accounts for mobile: {mobile_number}, call_id: {call_id}, session_id: {session_id}")
-        
+        self.logger.info(f"Looking up accounts for mobile: {mobile_number}, call_id: {call_id}")
         try:
-            # Call the API to get accounts by mobile number
             response = self.api_client.get_accounts_by_mobile(mobile_number, call_id)
-            
-            # If successful, format the response for the tools interface
-            if response["status"]["gstatus"]:
+            if response.get("status", {}).get("gstatus"):
                 accounts = response["response"]["responseData"]
-                account_list = []
-                
-                for account in accounts:
-                    account_list.append({
-                        "account_number": account["key"],
-                        "masked_account": account["value"]
-                    })
-                
+                account_list = [{
+                    "account_number": acc["key"],
+                    "masked_account": acc["value"]
+                } for acc in accounts]
                 self.logger.info(f"Found {len(account_list)} accounts for mobile {mobile_number}")
-                
-                # Log the account numbers for debugging
-                for account in account_list:
-                    self.logger.debug(f"Account: {account['account_number']} (masked: {account['masked_account']})")
-                
                 return {
                     "status": "success",
                     "message": f"Found {len(account_list)} accounts",
@@ -96,7 +74,7 @@ class MobileAuthService(ServiceInterface):
                 self.logger.warning(f"No accounts found for mobile {mobile_number}")
                 return {
                     "status": "error",
-                    "message": response["status"].get("gmmsg", "No accounts found for this mobile number"),
+                    "message": response.get("status", {}).get("gmmsg", "No accounts found"),
                     "accounts": []
                 }
         except Exception as e:

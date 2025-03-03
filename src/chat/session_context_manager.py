@@ -102,6 +102,10 @@ class SessionContextManager:
             session_id: The session identifier
             accounts: List of account information dictionaries
         """
+        self.logger.info(f"Setting retrieved accounts for session {session_id}")
+        for account in accounts:
+            self.logger.info(f"Account: {account['account_number']} (masked: {account.get('masked_account', 'N/A')})")
+            
         self.update_session_context(session_id, {
             "retrieved_accounts": accounts,
             "account_retrieved": True,
@@ -117,6 +121,11 @@ class SessionContextManager:
             session_id: The session identifier
             account_number: The selected account number
         """
+        # Validate that we're storing a full account number, not just the last digits
+        if len(account_number) < 10:
+            self.logger.error(f"Attempted to store incomplete account number: {account_number}")
+            raise ValueError(f"Invalid account number format: {account_number}")
+        
         self.update_session_context(session_id, {
             "selected_account": account_number,
             "account_selected": True,
@@ -134,7 +143,14 @@ class SessionContextManager:
             Selected account number or None if not set
         """
         context = self.get_session_context(session_id)
-        return context.get("selected_account")
+        account_number = context.get("selected_account")
+        
+        # Add validation to ensure we're not returning just the last digits
+        if account_number and len(account_number) < 10:
+            self.logger.error(f"Retrieved incomplete account number: {account_number}")
+            return None
+            
+        return account_number
     
     def is_account_selected(self, session_id: str) -> bool:
         """Check if an account has been selected
@@ -170,7 +186,11 @@ class SessionContextManager:
             List of account information dictionaries
         """
         context = self.get_session_context(session_id)
-        return context.get("retrieved_accounts", [])
+        accounts = context.get("retrieved_accounts", [])
+        self.logger.debug(f"Retrieved {len(accounts)} accounts for session {session_id}")
+        for account in accounts:
+            self.logger.debug(f"Account: {account['account_number']} (masked: {account.get('masked_account', 'N/A')})")
+        return accounts
     
     def has_accounts(self, session_id: str) -> bool:
         """Check if accounts have been retrieved for a session

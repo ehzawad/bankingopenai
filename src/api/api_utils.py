@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/api/api_utils.py
 import logging
 import re
@@ -17,17 +18,11 @@ def normalize_mobile_number(mobile_number: str) -> str:
     Returns:
         Normalized mobile number
     """
-    # Handle numeric digits
     mobile_number = re.sub(r'\D', '', mobile_number)
-    
-    # Handle Bangladesh country code
     if mobile_number.startswith("880"):
         mobile_number = mobile_number[3:]
-    
-    # Add leading 0 if needed
     if not mobile_number.startswith("0") and len(mobile_number) == 10:
         mobile_number = "0" + mobile_number
-        
     return mobile_number
 
 def log_api_call(function_name: str, url: str, params: Dict[str, str]) -> None:
@@ -39,8 +34,6 @@ def log_api_call(function_name: str, url: str, params: Dict[str, str]) -> None:
         params: Parameters for the API call
     """
     logger.critical(f"Function: {function_name}")
-    
-    # Build full URL for logging
     full_url = f"{url}?{'&'.join([f'{k}={quote_plus(str(v))}' for k, v in params.items()])}"
     logger.critical(full_url)
 
@@ -51,11 +44,8 @@ def log_api_response(response: Dict[str, Any]) -> None:
         response: API response to log
     """
     if isinstance(response, dict):
-        # Extract status and response from the JSON
         status = response.get("status", {})
         resp = response.get("response", {})
-        
-        # Combine and log them
         combined_response = [{**status, **resp}]
         logger.critical(combined_response)
 
@@ -102,12 +92,7 @@ def create_error_response(error_message: str, code: int = 500, additional_info: 
             "responseData": []
         }
     }
-    
-    # Add additional info if provided
     if additional_info:
         response["response"].update(additional_info)
-    
-    # Log error response
     log_api_response(response)
-    
     return response

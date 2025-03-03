@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/services/authentication/auth_service.py
 import logging
 from typing import Dict, Any, List, Optional
@@ -37,13 +38,15 @@ class AuthenticationService(ServiceInterface):
             ValueError: If the tool is not supported
         """
         self.logger.debug(f"Executing authentication tool: {tool_name} with args: {args}")
-        
         if tool_name == "validate_account":
             mobile_number = args.get("mobile_number")
             return validate_account(self.api_client, args["account_number"], mobile_number)
         elif tool_name == "validate_pin":
             mobile_number = args.get("mobile_number")
             return validate_pin(self.api_client, args["account_number"], args["pin"], mobile_number)
+        elif tool_name == "get_account_details":
+            mobile_number = args.get("mobile_number")
+            return self.api_client.get_account_details(args["account_number"], mobile_number)
         else:
             self.logger.error(f"Unknown authentication tool: {tool_name}")
             raise ValueError(f"Unknown authentication tool: {tool_name}")

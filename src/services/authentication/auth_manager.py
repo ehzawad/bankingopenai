@@ -1,8 +1,8 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/services/authentication/auth_manager.py
 import logging
 import time
-from typing import Dict, Tuple, Optional, Any, List
-import hashlib
+from typing import Dict, Tuple, Optional, List
 
 class AuthenticationManager:
     """Manages authentication state and session management"""
@@ -41,13 +41,13 @@ class AuthenticationManager:
         return None
     
     def is_authenticated(self, session_id: str) -> bool:
-        """Check if a session is authenticated
+        """Check if a session is authenticated and not expired
         
         Args:
             session_id: The session identifier
             
         Returns:
-            True if session is authenticated and not expired
+            True if session is authenticated and active
         """
         if session_id not in self.authenticated_sessions:
             return False
@@ -73,16 +73,13 @@ class AuthenticationManager:
         """
         current_time = time.time()
         expired_sessions = []
-        
         for session_id, (_, last_activity) in list(self.authenticated_sessions.items()):
             if current_time - last_activity > self.SESSION_TIMEOUT:
                 expired_sessions.append(session_id)
-                
         for session_id in expired_sessions:
             self.logger.info(f"Removing expired session: {session_id}")
             if session_id in self.authenticated_sessions:
                 del self.authenticated_sessions[session_id]
-                
         return expired_sessions
     
     def end_session(self, session_id: str) -> bool:
@@ -92,7 +89,7 @@ class AuthenticationManager:
             session_id: The session identifier
             
         Returns:
-            True if session was authenticated and removed
+            True if session was ended, False otherwise
         """
         if session_id in self.authenticated_sessions:
             del self.authenticated_sessions[session_id]

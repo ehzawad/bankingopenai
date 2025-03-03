@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/services/common/tool_definitions.py
 """
 Centralized definitions of tools used by various services
@@ -10,17 +11,17 @@ AUTH_TOOLS = [
         "type": "function",
         "function": {
             "name": "validate_account",
-            "description": "Validates if an account number exists in the system",
+            "description": "Validates if an account number exists in the system using the confirmed last 4 digits.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "account_number": {
                         "type": "string",
-                        "description": "The account number to validate"
+                        "description": "The account number to validate (including last 4 digit confirmation)"
                     },
                     "mobile_number": {
                         "type": "string",
-                        "description": "Optional mobile number for additional validation"
+                        "description": "Mobile number used for API calls"
                     }
                 },
                 "required": ["account_number"]
@@ -31,7 +32,7 @@ AUTH_TOOLS = [
         "type": "function",
         "function": {
             "name": "validate_pin",
-            "description": "Validates if the PIN is correct for the given account number",
+            "description": "Validates if the PIN is correct for the given account number.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -45,36 +46,7 @@ AUTH_TOOLS = [
                     },
                     "mobile_number": {
                         "type": "string",
-                        "description": "Optional mobile number for additional validation"
-                    }
-                },
-                "required": ["account_number", "pin"]
-            }
-        }
-    }
-]
-
-# Account-specific tools (without duplicating AUTH_TOOLS)
-ACCOUNT_SPECIFIC_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_account_details",
-            "description": "Get detailed information about an account",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "account_number": {
-                        "type": "string",
-                        "description": "The account number"
-                    },
-                    "pin": {
-                        "type": "string",
-                        "description": "The PIN for the account"
-                    },
-                    "mobile_number": {
-                        "type": "string",
-                        "description": "Optional mobile number for additional validation"
+                        "description": "Mobile number used for API calls"
                     }
                 },
                 "required": ["account_number", "pin"]
@@ -84,8 +56,58 @@ ACCOUNT_SPECIFIC_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_account_details",
+            "description": "Retrieves detailed account information for a validated account.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account_number": {
+                        "type": "string",
+                        "description": "The account number"
+                    },
+                    "mobile_number": {
+                        "type": "string",
+                        "description": "Mobile number used for API calls"
+                    }
+                },
+                "required": ["account_number"]
+            }
+        }
+    }
+]
+
+# Mobile authentication tools
+MOBILE_AUTH_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_accounts_by_mobile",
+            "description": "Retrieves accounts associated with a given mobile number.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mobile_number": {
+                        "type": "string",
+                        "description": "The mobile number to look up"
+                    },
+                    "call_id": {
+                        "type": "string",
+                        "description": "Optional call ID for tracking"
+                    }
+                },
+                "required": ["mobile_number"]
+            }
+        }
+    }
+]
+
+# Account-specific tools
+ACCOUNT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
             "name": "get_account_field",
-            "description": "Get a specific field from an authenticated account",
+            "description": "Retrieves a specific field from an account",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,7 +117,7 @@ ACCOUNT_SPECIFIC_TOOLS = [
                     },
                     "field_name": {
                         "type": "string",
-                        "description": "The field to retrieve (e.g., balance, last_transaction, account_status)"
+                        "description": "The specific field to retrieve"
                     }
                 },
                 "required": ["account_number", "field_name"]
@@ -106,13 +128,13 @@ ACCOUNT_SPECIFIC_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_currency_details",
-            "description": "Get details about a currency",
+            "description": "Retrieves details about the account currency",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "currency_code": {
                         "type": "string",
-                        "description": "The currency code (e.g., USD, EUR)"
+                        "description": "Currency code of the account"
                     }
                 },
                 "required": ["currency_code"]
@@ -123,44 +145,16 @@ ACCOUNT_SPECIFIC_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_account_type_details",
-            "description": "Get details about an account type",
+            "description": "Retrieves details about the account type",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "account_type": {
                         "type": "string",
-                        "description": "The account type (e.g., checking, savings)"
+                        "description": "Type of the account"
                     }
                 },
                 "required": ["account_type"]
-            }
-        }
-    }
-]
-
-# Combined account tools without duplication
-ACCOUNT_TOOLS = AUTH_TOOLS + ACCOUNT_SPECIFIC_TOOLS
-
-# Mobile authentication tools
-MOBILE_AUTH_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_accounts_by_mobile",
-            "description": "Get account numbers associated with a mobile number",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "mobile_number": {
-                        "type": "string",
-                        "description": "The mobile number to lookup accounts for"
-                    },
-                    "call_id": {
-                        "type": "string",
-                        "description": "Optional call ID for tracking purposes"
-                    }
-                },
-                "required": ["mobile_number"]
             }
         }
     }

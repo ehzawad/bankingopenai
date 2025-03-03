@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # File: banking-assistant/src/api/mock_client.py
 import json
 import logging
@@ -22,11 +23,7 @@ class MockBankingAPIClient(BankingAPIClient):
     
     def __init__(self, data_path: str = "data/mock_api_data.json"):
         self.logger = logging.getLogger("banking_assistant.api.mock")
-        
-        # Get current date for setting realistic transaction dates
         now = datetime.now()
-        
-        # Sample account data with realistic past dates
         self.sample_accounts = [
             {
                 "account_number": "1311002345678",
@@ -116,36 +113,19 @@ class MockBankingAPIClient(BankingAPIClient):
                 }
             }
         ]
-        
-        # Create a lookup from mobile to accounts
         self.mobile_to_accounts = {}
         for account in self.sample_accounts:
             mobile = account["mobile"]
             if mobile not in self.mobile_to_accounts:
                 self.mobile_to_accounts[mobile] = []
             self.mobile_to_accounts[mobile].append(account)
-            
-        # Create account number lookup
         self.account_lookup = {account["account_number"]: account for account in self.sample_accounts}
-        
         self.logger.info(f"Initialized mock API client with {len(self.sample_accounts)} sample accounts")
     
     def get_accounts_by_mobile(self, mobile_number: str, call_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get accounts associated with a mobile number
-        
-        Args:
-            mobile_number: The mobile number to look up
-            call_id: Optional call ID for tracking
-            
-        Returns:
-            API response containing account numbers
-        """
         mobile_number = normalize_mobile_number(mobile_number)
         call_id = call_id or generate_call_id()
-        
         self.logger.info(f"Looking up accounts for mobile number: {mobile_number}")
-        
-        # Log API call
         url = "http://10.45.14.24/ccmwmtb/account/account-info-by-mobile-no"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -155,10 +135,7 @@ class MockBankingAPIClient(BankingAPIClient):
             "cli": mobile_number
         }
         log_api_call("data_validation", url, params)
-        
-        # Find accounts matching this mobile number
         accounts = self.mobile_to_accounts.get(mobile_number, [])
-        
         if accounts:
             response_data = []
             for account in accounts:
@@ -166,7 +143,6 @@ class MockBankingAPIClient(BankingAPIClient):
                     "key": account["account_number"],
                     "value": account["masked_account"]
                 })
-                
             response = {
                 "status": {
                     "gmsg": "OK", 
@@ -184,20 +160,13 @@ class MockBankingAPIClient(BankingAPIClient):
                     "responseData": response_data
                 }
             }
-            
-            # Log response
             log_api_response(response)
-            
-            # Log account numbers for debugging
             for account in accounts:
                 acc_num = account["account_number"]
                 last_4_digits = acc_num[-4:]
                 self.logger.info(f"input account number last 4 digit : {last_4_digits} and match account {acc_num}")
-                
             return response
-            
         else:
-            # Return empty response
             empty_response = {
                 "status": {
                     "gmsg": "ERROR", 
@@ -215,33 +184,15 @@ class MockBankingAPIClient(BankingAPIClient):
                     "responseData": []
                 }
             }
-            
-            # Log empty response
             log_api_response(empty_response)
-            
             return empty_response
     
     def verify_pin(self, account_number: str, pin: str, mobile_number: Optional[str] = None, call_id: Optional[str] = None) -> Dict[str, Any]:
-        """Verify PIN for an account
-        
-        Args:
-            account_number: The account number
-            pin: The PIN to verify
-            mobile_number: Optional mobile number for the customer
-            call_id: Optional call ID for tracking
-            
-        Returns:
-            API response with verification result
-        """
         call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
-        
-        # Log process message with minimal sensitive info
         self.logger.info(f"process : validate_pin_number, sender_id : {call_id}_+8809611888444_{mobile_number}, information : " + 
-                       f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
-                       f"'account_number': 1, 'process_interruption': None}}")
-        
-        # Log API call
+                           f"{{'input_text': '****', 'last_intent': 'inform', 'intent_confidence': {random.random()}, " +
+                           f"'account_number': 1, 'process_interruption': None}}")
         url = "http://10.45.14.24/ccmwmtb/card/verify-tpin"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -252,20 +203,49 @@ class MockBankingAPIClient(BankingAPIClient):
             "ccn": account_number,
             "crp": pin
         }
-        
-        self.logger.critical(f"Function: account_pin_validation_api")
-        self.logger.info(f"account_pin_validation_api")
-        
-        # Don't log PIN in parameters
+        self.logger.critical("Function: account_pin_validation_api")
+        self.logger.info("account_pin_validation_api")
         secure_params = params.copy()
         secure_params["crp"] = "****"
         log_api_call("data_validation", url, secure_params)
         
-        # Check if account exists
-        account = self.account_lookup.get(account_number)
+        # CRITICAL FIX: Handle short account numbers before PIN verification
+        original_account_number = account_number
+        if len(account_number) <= 4 and mobile_number:
+            self.logger.warning(f"Short account number detected in verify_pin: {account_number}")
+            matching_account = None
+            
+            # Try to find matching account by last digits
+            for acc in self.sample_accounts:
+                if acc["account_number"].endswith(account_number) and acc["mobile"] == mobile_number:
+                    matching_account = acc
+                    self.logger.info(f"Found matching account: {acc['account_number']} for digits: {account_number}")
+                    break
+            
+            if matching_account:
+                account_number = matching_account["account_number"]
+                self.logger.info(f"Using full account number: {account_number} instead of short digits: {original_account_number}")
+            else:
+                self.logger.warning(f"No matching account found for {original_account_number}")
+                response = {
+                    "status": {
+                        "gmsg": "ERROR", 
+                        "gstatus": False, 
+                        "gcode": 404, 
+                        "gmcode": 3036, 
+                        "gmmsg": "Invalid Account"
+                    },
+                    "response": {
+                        "gdata": [], 
+                        "Status": "Failed", 
+                        "Reason": f"No account ending with {original_account_number} found for this mobile number"
+                    }
+                }
+                log_api_response(response)
+                return response
         
+        account = self.account_lookup.get(account_number)
         if account and account["pin"] == pin:
-            # Valid PIN
             response = {
                 "status": {
                     "gmsg": "OK", 
@@ -280,14 +260,10 @@ class MockBankingAPIClient(BankingAPIClient):
                     "Reason": "NA"
                 }
             }
-            
-            # Log response
             log_api_response(response)
-            self.logger.info(f"PIN validation successful")
-            
+            self.logger.info("PIN validation successful")
             return response
         else:
-            # Invalid PIN
             response = {
                 "status": {
                     "gmsg": "ERROR", 
@@ -302,12 +278,10 @@ class MockBankingAPIClient(BankingAPIClient):
                     "Reason": "Invalid PIN"
                 }
             }
-            
-            # Log response
             log_api_response(response)
-            
             return response
     
+
     def get_account_details(self, account_number: str, mobile_number: Optional[str] = None, call_id: Optional[str] = None) -> Dict[str, Any]:
         """Get detailed account information
         
@@ -322,13 +296,9 @@ class MockBankingAPIClient(BankingAPIClient):
         call_id = call_id or generate_call_id()
         mobile_number = mobile_number or "unknown"
         ref_no = generate_ref_no()
-        
-        # Log request with minimal sensitive information
         self.logger.info(f"process:action_account_balance_Response, sender_id : {call_id}_+8809611888444_{mobile_number}, account_number: {account_number}, required service : currentBalance")
-        self.logger.critical(f"Function: account_service_api")
-        self.logger.info(f"account_service_api")
-        
-        # Log API call
+        self.logger.critical("Function: account_service_api")
+        self.logger.info("account_service_api")
         url = "http://10.45.14.24/ccmwmtb/account/common-api-function"
         params = {
             "secret": "PVFzWnlWQmJsdkNxQUszcWJrbFlUNjJVREpVMXR6R09kTHN5QXNHYSt1ZWM=",
@@ -342,9 +312,24 @@ class MockBankingAPIClient(BankingAPIClient):
         }
         log_api_call("data_validation", url, params)
         
+        # CRITICAL FIX: Handle short account numbers by trying to match with the last digits
+        if len(account_number) <= 4 and mobile_number:
+            self.logger.warning(f"Short account number detected in get_account_details: {account_number}")
+            matching_account = None
+            
+            # Try to find matching account by last digits
+            for acc in self.sample_accounts:
+                if acc["account_number"].endswith(account_number) and acc["mobile"] == mobile_number:
+                    matching_account = acc
+                    self.logger.info(f"Found matching account: {acc['account_number']} for digits: {account_number}")
+                    break
+            
+            if matching_account:
+                account_number = matching_account["account_number"]
+                self.logger.info(f"Using full account number: {account_number} instead of short digits")
+        
         if account_number in self.account_lookup:
             account = self.account_lookup[account_number]
-            # Return account details
             response = {
                 "status": {
                     "gmsg": "OK", 
@@ -364,13 +349,9 @@ class MockBankingAPIClient(BankingAPIClient):
                     "responseData": [account["details"]]
                 }
             }
-            
-            # Log response
             log_api_response(response)
-            
             return response
         else:
-            # Account not found
             response = {
                 "status": {
                     "gmsg": "ERROR", 
@@ -390,8 +371,5 @@ class MockBankingAPIClient(BankingAPIClient):
                     "responseData": []
                 }
             }
-            
-            # Log response
             log_api_response(response)
-            
             return response
